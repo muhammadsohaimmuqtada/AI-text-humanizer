@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "authenticity-intelligence-platform"
+version = "0.3.0"
+description = "Authenticity platform with forensic scoring, API service, and readiness evaluation"
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "Authenticity Intelligence Platform Contributors" }
+]
+keywords = ["deepfake", "forensics", "authenticity", "provenance", "risk-scoring"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Intended Audience :: Developers",
+  "Topic :: Security",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Multimedia :: Sound/Audio",
+]
+
+[project.optional-dependencies]
+forensics = [
+  "numpy>=1.24",
+  "Pillow>=10.0",
+  "scipy>=1.10",
+]
+api = [
+  "fastapi>=0.111",
+  "uvicorn>=0.30",
+]
+test = [
+  "fastapi>=0.111",
+]
+
+[project.scripts]
+aip = "aip.cli:main"

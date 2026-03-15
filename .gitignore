@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.env
+*.log
+evaluation_report.json
+scorecard.json
+scorecard.md
+report.json
+/aip_audit.jsonl
+/tmp_aip_*

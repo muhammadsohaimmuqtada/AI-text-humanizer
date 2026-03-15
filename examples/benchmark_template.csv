@@ -1,0 +1,5 @@
+id,input_path,text,modality,identity_claim,label
+sample-1,/path/to/real_image.jpg,,image,,real
+sample-2,/path/to/fake_image.jpg,,image,,fake
+sample-3,,"Official signed statement from company spokesperson.",text,company spokesperson,real
+sample-4,,"I am the CEO and this is my urgent transfer request.",text,CEO Name,fake
