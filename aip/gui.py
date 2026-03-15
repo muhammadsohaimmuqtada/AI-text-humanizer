@@ -48,11 +48,14 @@ _PLACEHOLDER_INPUT = (
 # ---------------------------------------------------------------------------
 
 # Each preset defines the number of sequential humanize() passes and the
-# synonym / merge rates used on every pass.
+# synonym / merge rates.  synonym_rate is only applied on the *first* pass;
+# subsequent passes use merge/structural variation only (synonym_rate=0.0).
+# synonym_rate is capped at _MAX_SYNONYM_RATE (0.40) in the core pipeline;
+# the values below reflect that safe ceiling.
 _BYPASS_PRESETS: dict[str, dict[str, int | float] | None] = {
-    "Light":      {"passes": 1, "synonym_rate": 0.35, "merge_rate": 0.25},
-    "Medium":     {"passes": 2, "synonym_rate": 0.60, "merge_rate": 0.40},
-    "Aggressive": {"passes": 3, "synonym_rate": 0.85, "merge_rate": 0.60},
+    "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30},
+    "Medium":     {"passes": 2, "synonym_rate": 0.35, "merge_rate": 0.45},
+    "Aggressive": {"passes": 3, "synonym_rate": 0.40, "merge_rate": 0.60},
     "Custom":     None,  # uses the manual slider values
 }
 
@@ -402,7 +405,12 @@ class HumanizerApp:
         thread.start()
 
     def _humanize_worker(self, text: str) -> None:
-        """Run humanize() (possibly multiple passes) in a background thread."""
+        """Run humanize() (possibly multiple passes) in a background thread.
+
+        Synonym substitution is applied only on the *first* pass to avoid
+        compounding WordNet quirks across passes.  Subsequent passes rely
+        solely on structural variation (sentence merging and marker stripping).
+        """
         try:
             strength = self._bypass_strength.get()
             preset = _BYPASS_PRESETS.get(strength)
@@ -420,10 +428,13 @@ class HumanizerApp:
             total_markers_removed = 0
             total_sentences_merged = 0
 
-            for _pass in range(passes):
+            for pass_num in range(passes):
+                # Only apply synonym swapping on the first pass so that
+                # successive passes use structural variation (merging) only.
+                current_synonym_rate = synonym_rate if pass_num == 0 else 0.0
                 result = humanize(
                     current_text,
-                    synonym_rate=synonym_rate,
+                    synonym_rate=current_synonym_rate,
                     merge_rate=merge_rate,
                 )
                 total_markers_removed += result.markers_removed

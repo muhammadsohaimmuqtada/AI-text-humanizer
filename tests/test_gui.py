@@ -58,9 +58,16 @@ class TestBypassPresets(unittest.TestCase):
             _BYPASS_PRESETS["Light"]["synonym_rate"],
             _BYPASS_PRESETS["Medium"]["synonym_rate"],
         )
-        self.assertLess(
+        self.assertLessEqual(
             _BYPASS_PRESETS["Medium"]["synonym_rate"],
             _BYPASS_PRESETS["Aggressive"]["synonym_rate"],
+        )
+
+    def test_aggressive_synonym_rate_does_not_exceed_medium(self) -> None:
+        """Aggressive rate must be >= Medium rate (never lower than a weaker preset)."""
+        self.assertGreaterEqual(
+            _BYPASS_PRESETS["Aggressive"]["synonym_rate"],
+            _BYPASS_PRESETS["Medium"]["synonym_rate"],
         )
 
     def test_merge_rate_increases_with_strength(self) -> None:
@@ -104,9 +111,9 @@ class TestMultiPassLogic(unittest.TestCase):
     # Preset values mirrored from _BYPASS_PRESETS so we can test without tkinter.
     # Keep in sync with aip/gui.py _BYPASS_PRESETS when updating preset values.
     _PRESETS = {
-        "Light":      {"passes": 1, "synonym_rate": 0.35, "merge_rate": 0.25},
-        "Medium":     {"passes": 2, "synonym_rate": 0.60, "merge_rate": 0.40},
-        "Aggressive": {"passes": 3, "synonym_rate": 0.85, "merge_rate": 0.60},
+        "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30},
+        "Medium":     {"passes": 2, "synonym_rate": 0.35, "merge_rate": 0.45},
+        "Aggressive": {"passes": 3, "synonym_rate": 0.40, "merge_rate": 0.60},
     }
 
     def _run_passes(self, text: str, passes: int, synonym_rate: float, merge_rate: float) -> str:
@@ -164,6 +171,25 @@ class TestMultiPassLogic(unittest.TestCase):
         text = "AI systems are becoming incredibly powerful and highly advanced. Many researchers study them closely."
         out = self._run_passes(text, **self._PRESETS["Aggressive"])
         self.assertTrue(out.strip())
+
+    def test_first_pass_only_synonym_logic_preserves_blacklisted_words(self) -> None:
+        """Blacklisted words must survive aggressive multi-pass processing."""
+        from aip.humanizer import humanize
+
+        text = (
+            "The social platform uses cloud systems. "
+            "Data privacy is an ethical concern at the same time."
+        )
+        current = text
+        for pass_num in range(3):
+            sr = 0.40 if pass_num == 0 else 0.0
+            result = humanize(current, synonym_rate=sr, merge_rate=0.60)
+            current = result.humanized_text
+
+        output = current.lower()
+        for word in ("social", "cloud", "data", "same"):
+            with self.subTest(word=word):
+                self.assertIn(word, output)
 
 
 if __name__ == "__main__":

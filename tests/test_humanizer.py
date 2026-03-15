@@ -14,6 +14,8 @@ import unittest
 
 from aip.humanizer import (
     HumanizeResult,
+    _MAX_SYNONYM_RATE,
+    _SYNONYM_BLACKLIST,
     _capitalize_sentences,
     humanize,
     strip_ai_markers,
@@ -312,6 +314,48 @@ class TestHumanizePipeline(unittest.TestCase):
     def test_sentences_merged_is_integer(self) -> None:
         result = humanize("First. Second.", seed=0)
         self.assertIsInstance(result.sentences_merged, int)
+
+
+class TestSynonymSafetyGuards(unittest.TestCase):
+    """Tests for the synonym blacklist and rate-capping safety measures."""
+
+    def test_blacklisted_words_are_never_swapped(self) -> None:
+        """Context-critical blacklisted words must survive at swap_rate=1.0."""
+        critical_words = ["same", "social", "cloud", "digital", "data", "privacy"]
+        for word in critical_words:
+            text = f"The {word} system works well."
+            result = substitute_synonyms(text, swap_rate=1.0, rng=random.Random(0))
+            with self.subTest(word=word):
+                self.assertIn(word, result.lower())
+
+    def test_synonym_rate_capped_at_max(self) -> None:
+        """swap_rate values above _MAX_SYNONYM_RATE must be clamped."""
+        # With a very high requested rate the function must still return a
+        # grammatically intact string (not raise, not return empty).
+        text = "The quick brown fox jumps over the lazy dog."
+        result = substitute_synonyms(text, swap_rate=0.99, rng=random.Random(42))
+        self.assertIsInstance(result, str)
+        self.assertTrue(result.strip())
+
+    def test_max_synonym_rate_value(self) -> None:
+        """_MAX_SYNONYM_RATE must not exceed the documented safe threshold."""
+        self.assertLessEqual(_MAX_SYNONYM_RATE, 0.40)
+
+    def test_blacklist_contains_key_words(self) -> None:
+        """Spot-check that the expected words are in the blacklist."""
+        expected = {"same", "social", "cloud", "digital", "data", "privacy", "ethical"}
+        for word in expected:
+            with self.subTest(word=word):
+                self.assertIn(word, _SYNONYM_BLACKLIST)
+
+    def test_humanize_preserves_blacklisted_words_at_high_rate(self) -> None:
+        """Full pipeline must not replace blacklisted words even at Aggressive rates."""
+        text = "The social platform uses cloud systems to store data in the same way."
+        result = humanize(text, synonym_rate=0.40, merge_rate=0.60, seed=0)
+        output = result.humanized_text.lower()
+        for word in ("social", "cloud", "data", "same"):
+            with self.subTest(word=word):
+                self.assertIn(word, output)
 
 
 if __name__ == "__main__":

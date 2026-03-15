@@ -67,6 +67,29 @@ _AI_MARKERS: List[str] = [
 # POS tags eligible for synonym substitution (adjectives and adverbs only)
 _SWAP_TAGS = {"JJ", "JJR", "JJS", "RB", "RBR", "RBS"}
 
+# Maximum safe synonym substitution rate. Exceeding this value causes too many
+# bizarre replacements (WordNet secondary senses) that destroy readability.
+_MAX_SYNONYM_RATE: float = 0.40
+
+# Words that must never be swapped – they carry precise contextual meaning that
+# WordNet synonyms routinely mishandle (e.g. "same" → "Saami", "cloud" → "corrupt").
+_SYNONYM_BLACKLIST: frozenset = frozenset(
+    {
+        "same", "social", "cloud", "public", "human", "local", "global",
+        "digital", "data", "privacy", "ethical", "real", "true", "false",
+        "good", "bad", "new", "old", "high", "low", "large", "small",
+        "free", "open", "fast", "slow", "full", "empty", "clean", "clear",
+        "common", "general", "special", "natural", "physical", "mental",
+        "personal", "political", "economic", "cultural", "legal",
+        "medical", "scientific", "technical", "modern", "current", "recent",
+        "major", "minor", "main", "key", "core", "basic", "simple", "complex",
+        "direct", "final", "total", "specific", "standard", "advanced",
+        "primary", "secondary", "early", "late", "long", "short",
+        "deep", "wide", "broad", "narrow", "light", "dark", "hard", "soft",
+        "strong", "weak", "rich", "poor", "safe", "secure", "critical",
+    }
+)
+
 # Conjunctions used when merging two adjacent short sentences
 _MERGE_CONJUNCTIONS = [
     " and ",
@@ -237,16 +260,31 @@ def _get_synonym(word: str, rng: Optional[random.Random] = None) -> Optional[str
 
     Only adjectives (JJ*) and adverbs (RB*) are passed in from the caller, so
     the synonym lookup is safe with respect to preserving logical meaning.
+
+    Synonyms are drawn exclusively from the **first** (most common) synset so
+    that obscure secondary senses (e.g. "cloud" → "corrupt", "same" → "Saami")
+    are never chosen.  Words in ``_SYNONYM_BLACKLIST`` are never swapped.
     """
     if not _NLTK_AVAILABLE:
         return None
 
+    if word.lower() in _SYNONYM_BLACKLIST:
+        return None
+
+    synsets = wordnet.synsets(word)
+    if not synsets:
+        return None
+
+    # Use only the first (most frequent) synset to avoid bizarre secondary
+    # definitions that destroy semantic meaning.  WordNet orders synsets from
+    # most to least frequent based on corpus analysis (SemCor), so synsets[0]
+    # represents the predominant, everyday sense of the word.
+    first_synset = synsets[0]
     synonyms: set = set()
-    for syn in wordnet.synsets(word):
-        for lemma in syn.lemmas():
-            name = lemma.name()
-            if name.lower() != word.lower() and "_" not in name and name.isalpha():
-                synonyms.add(name)
+    for lemma in first_synset.lemmas():
+        name = lemma.name()
+        if name.lower() != word.lower() and "_" not in name and name.isalpha():
+            synonyms.add(name)
 
     if not synonyms:
         return None
@@ -271,9 +309,14 @@ def substitute_synonyms(
     verbs, and named entities – which carry core logical meaning – are never
     modified.
 
+    ``swap_rate`` is silently clamped to ``_MAX_SYNONYM_RATE`` (currently
+    ``0.40``) so that callers cannot accidentally pass rates that produce
+    incoherent output by triggering obscure WordNet secondary senses.
+
     Args:
         text: Input sentence or paragraph.
-        swap_rate: Fraction of eligible words to swap (0–1).
+        swap_rate: Fraction of eligible words to swap (0–1). Values above
+            ``_MAX_SYNONYM_RATE`` are clamped to that maximum.
         rng: Optional seeded :class:`random.Random` for reproducible output.
 
     Returns:
@@ -282,6 +325,9 @@ def substitute_synonyms(
     """
     if not _ensure_nltk_data():
         return text
+
+    # Clamp to the safe maximum to prevent garbling from high substitution rates
+    swap_rate = min(swap_rate, _MAX_SYNONYM_RATE)
 
     _rng = rng or random
 
