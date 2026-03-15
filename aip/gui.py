@@ -2,8 +2,10 @@
 
 Provides a desktop window with:
   - An input text area for pasting AI-generated text.
-  - Synonym-rate and merge-rate sliders.
-  - A "Humanize" button that calls the core pipeline.
+  - A Bypass Strength selector (Light / Medium / Aggressive / Custom).
+  - Synonym-rate and merge-rate sliders (active only in Custom mode).
+  - A "Humanize" button that calls the core pipeline (multi-pass for
+    Medium and Aggressive strengths).
   - An output text area showing the humanized result.
   - A status bar with run statistics.
 
@@ -40,6 +42,21 @@ _PLACEHOLDER_INPUT = (
     "has advanced significantly. In conclusion, these models demonstrate "
     "remarkable capabilities."
 )
+
+# ---------------------------------------------------------------------------
+# Bypass-strength presets
+# ---------------------------------------------------------------------------
+
+# Each preset defines the number of sequential humanize() passes and the
+# synonym / merge rates used on every pass.
+_BYPASS_PRESETS: dict[str, dict[str, int | float] | None] = {
+    "Light":      {"passes": 1, "synonym_rate": 0.35, "merge_rate": 0.25},
+    "Medium":     {"passes": 2, "synonym_rate": 0.60, "merge_rate": 0.40},
+    "Aggressive": {"passes": 3, "synonym_rate": 0.85, "merge_rate": 0.60},
+    "Custom":     None,  # uses the manual slider values
+}
+
+_DEFAULT_STRENGTH = "Aggressive"
 
 _DARK_BG = "#1e1e2e"
 _PANEL_BG = "#2a2a3e"
@@ -85,6 +102,7 @@ class HumanizerApp:
         self._synonym_rate = tk.DoubleVar(value=0.35)
         self._merge_rate = tk.DoubleVar(value=0.25)
         self._status_text = tk.StringVar(value="Ready.")
+        self._bypass_strength = tk.StringVar(value=_DEFAULT_STRENGTH)
 
         self._build_header()
         self._build_body()
@@ -178,35 +196,62 @@ class HumanizerApp:
             "length": 140,
         }
 
+        # -- Bypass Strength selector
+        tk.Label(controls, text="Bypass Strength", **lbl_style).pack(
+            anchor="w", pady=(14, 2)
+        )
+        for strength in _BYPASS_PRESETS:
+            tk.Radiobutton(
+                controls,
+                text=strength,
+                variable=self._bypass_strength,
+                value=strength,
+                command=self._on_bypass_change,
+                bg=_DARK_BG,
+                fg=_TEXT_FG,
+                selectcolor=_PANEL_BG,
+                activebackground=_DARK_BG,
+                activeforeground=_ACCENT,
+                highlightthickness=0,
+                anchor="w",
+            ).pack(fill=tk.X)
+
+        tk.Frame(controls, bg=_BORDER, height=1).pack(fill=tk.X, pady=(8, 0))
+
         # -- Synonym rate
         tk.Label(controls, text="Synonym Rate", **lbl_style).pack(
-            anchor="w", pady=(20, 0)
+            anchor="w", pady=(8, 0)
         )
         self._syn_val_lbl = tk.Label(
             controls, textvariable=self._synonym_rate, **val_style
         )
         self._syn_val_lbl.pack(anchor="e")
-        tk.Scale(
+        self._syn_slider = tk.Scale(
             controls,
             variable=self._synonym_rate,
             command=lambda _v: self._update_slider_labels(),
             **slider_style,
-        ).pack(fill=tk.X)
+        )
+        self._syn_slider.pack(fill=tk.X)
 
         # -- Merge rate
         tk.Label(controls, text="Merge Rate", **lbl_style).pack(
-            anchor="w", pady=(14, 0)
+            anchor="w", pady=(8, 0)
         )
         self._merge_val_lbl = tk.Label(
             controls, textvariable=self._merge_rate, **val_style
         )
         self._merge_val_lbl.pack(anchor="e")
-        tk.Scale(
+        self._merge_slider = tk.Scale(
             controls,
             variable=self._merge_rate,
             command=lambda _v: self._update_slider_labels(),
             **slider_style,
-        ).pack(fill=tk.X)
+        )
+        self._merge_slider.pack(fill=tk.X)
+
+        # Apply initial preset to sliders
+        self._on_bypass_change()
 
         # -- Humanize button
         self._humanize_btn = _HoverButton(
@@ -313,6 +358,23 @@ class HumanizerApp:
             text=f"{self._merge_rate.get():.2f}"
         )
 
+    def _on_bypass_change(self) -> None:
+        """Sync sliders to the selected preset; disable them for non-Custom modes."""
+        strength = self._bypass_strength.get()
+        preset = _BYPASS_PRESETS.get(strength)
+        if preset is not None:
+            # Apply preset rates to sliders
+            self._synonym_rate.set(preset["synonym_rate"])
+            self._merge_rate.set(preset["merge_rate"])
+            # Disable sliders – rates are managed by the preset
+            self._syn_slider.configure(state=tk.DISABLED)
+            self._merge_slider.configure(state=tk.DISABLED)
+        else:
+            # Custom: let the user control the sliders freely
+            self._syn_slider.configure(state=tk.NORMAL)
+            self._merge_slider.configure(state=tk.NORMAL)
+        self._update_slider_labels()
+
     def _run_humanize(self) -> None:
         """Kick off humanisation in a background thread to keep UI responsive."""
         text = self._input_text.get("1.0", tk.END).strip()
@@ -322,8 +384,15 @@ class HumanizerApp:
             )
             return
 
+        strength = self._bypass_strength.get()
+        preset = _BYPASS_PRESETS.get(strength)
+        passes = int(preset["passes"]) if preset is not None else 1
+        pass_label = HumanizerApp._format_pass_label(passes)
+
         self._humanize_btn.configure(state=tk.DISABLED, text="⏳  Processing…")
-        self._status_text.set("Running humanizer pipeline…")
+        self._status_text.set(
+            f"Running humanizer pipeline… ({strength}, {pass_label})"
+        )
         self._set_output("")
 
         # daemon=True: humanize() is pure computation (no I/O, no locks), so
@@ -333,24 +402,63 @@ class HumanizerApp:
         thread.start()
 
     def _humanize_worker(self, text: str) -> None:
-        """Run humanize() in a background thread; schedule UI update on main thread."""
+        """Run humanize() (possibly multiple passes) in a background thread."""
         try:
-            result = humanize(
-                text,
-                synonym_rate=self._synonym_rate.get(),
-                merge_rate=self._merge_rate.get(),
+            strength = self._bypass_strength.get()
+            preset = _BYPASS_PRESETS.get(strength)
+            if preset is not None:
+                passes = int(preset["passes"])
+                synonym_rate = float(preset["synonym_rate"])
+                merge_rate = float(preset["merge_rate"])
+            else:
+                passes = 1
+                synonym_rate = self._synonym_rate.get()
+                merge_rate = self._merge_rate.get()
+
+            current_text = text
+            result = None
+            total_markers_removed = 0
+            total_sentences_merged = 0
+
+            for _pass in range(passes):
+                result = humanize(
+                    current_text,
+                    synonym_rate=synonym_rate,
+                    merge_rate=merge_rate,
+                )
+                total_markers_removed += result.markers_removed
+                total_sentences_merged += result.sentences_merged
+                current_text = result.humanized_text
+
+            self._root.after(
+                0,
+                self._on_success,
+                result,
+                passes,
+                total_markers_removed,
+                total_sentences_merged,
             )
-            self._root.after(0, self._on_success, result)
         except Exception as exc:  # noqa: BLE001
             self._root.after(0, self._on_error, exc)
 
-    def _on_success(self, result: object) -> None:  # result is HumanizeResult
+    @staticmethod
+    def _format_pass_label(passes: int) -> str:
+        return f"{passes} pass{'es' if passes > 1 else ''}"
+
+    def _on_success(
+        self,
+        result: object,
+        passes: int = 1,
+        total_markers_removed: int = 0,
+        total_sentences_merged: int = 0,
+    ) -> None:  # result is HumanizeResult
         self._set_output(result.humanized_text)  # type: ignore[attr-defined]
+        pass_label = self._format_pass_label(passes)
         stats = (
-            f"Done ✓  |  Words: {result.original_word_count} → "  # type: ignore[attr-defined]
+            f"Done ✓  |  {pass_label}  |  Words: {result.original_word_count} → "  # type: ignore[attr-defined]
             f"{result.humanized_word_count}  |  "
-            f"Markers removed: {result.markers_removed}  |  "
-            f"Sentences merged: {result.sentences_merged}"
+            f"Markers removed: {total_markers_removed}  |  "
+            f"Sentences merged: {total_sentences_merged}"
         )
         self._status_text.set(stats)
         self._humanize_btn.configure(state=tk.NORMAL, text="▶  Humanize")
