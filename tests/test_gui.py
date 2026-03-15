@@ -40,7 +40,6 @@ class TestBypassPresets(unittest.TestCase):
                 continue  # Custom is explicitly None
             with self.subTest(strength=name):
                 self.assertIn("passes", preset)
-                self.assertIn("synonym_rate", preset)
                 self.assertIn("merge_rate", preset)
 
     def test_custom_preset_is_none(self) -> None:
@@ -52,23 +51,6 @@ class TestBypassPresets(unittest.TestCase):
         aggressive = _BYPASS_PRESETS["Aggressive"]["passes"]
         self.assertLess(light, medium)
         self.assertLess(medium, aggressive)
-
-    def test_synonym_rate_increases_with_strength(self) -> None:
-        self.assertLess(
-            _BYPASS_PRESETS["Light"]["synonym_rate"],
-            _BYPASS_PRESETS["Medium"]["synonym_rate"],
-        )
-        self.assertLessEqual(
-            _BYPASS_PRESETS["Medium"]["synonym_rate"],
-            _BYPASS_PRESETS["Aggressive"]["synonym_rate"],
-        )
-
-    def test_aggressive_synonym_rate_does_not_exceed_medium(self) -> None:
-        """Aggressive rate must be >= Medium rate (never lower than a weaker preset)."""
-        self.assertGreaterEqual(
-            _BYPASS_PRESETS["Aggressive"]["synonym_rate"],
-            _BYPASS_PRESETS["Medium"]["synonym_rate"],
-        )
 
     def test_merge_rate_increases_with_strength(self) -> None:
         self.assertLess(
@@ -85,8 +67,6 @@ class TestBypassPresets(unittest.TestCase):
             if preset is None:
                 continue
             with self.subTest(strength=name):
-                self.assertGreaterEqual(preset["synonym_rate"], 0.0)
-                self.assertLessEqual(preset["synonym_rate"], 1.0)
                 self.assertGreaterEqual(preset["merge_rate"], 0.0)
                 self.assertLessEqual(preset["merge_rate"], 1.0)
 
@@ -111,29 +91,29 @@ class TestMultiPassLogic(unittest.TestCase):
     # Preset values mirrored from _BYPASS_PRESETS so we can test without tkinter.
     # Keep in sync with aip/gui.py _BYPASS_PRESETS when updating preset values.
     _PRESETS = {
-        "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30},
-        "Medium":     {"passes": 2, "synonym_rate": 0.35, "merge_rate": 0.45},
-        "Aggressive": {"passes": 3, "synonym_rate": 0.40, "merge_rate": 0.60},
+        "Light":      {"passes": 1, "merge_rate": 0.30},
+        "Medium":     {"passes": 2, "merge_rate": 0.45},
+        "Aggressive": {"passes": 3, "merge_rate": 0.60},
     }
 
-    def _run_passes(self, text: str, passes: int, synonym_rate: float, merge_rate: float) -> str:
+    def _run_passes(self, text: str, passes: int, merge_rate: float) -> str:
         """Helper that mimics the _humanize_worker multi-pass loop."""
         from aip.humanizer import humanize
 
         current = text
         for _ in range(passes):
-            result = humanize(current, synonym_rate=synonym_rate, merge_rate=merge_rate)
+            result = humanize(current, merge_rate=merge_rate)
             current = result.humanized_text
         return current
 
     def test_single_pass_produces_non_empty_output(self) -> None:
         text = "Furthermore, AI is rapidly evolving. It is important to note that this changes everything."
-        out = self._run_passes(text, passes=1, synonym_rate=0.35, merge_rate=0.25)
+        out = self._run_passes(text, passes=1, merge_rate=0.25)
         self.assertTrue(out.strip())
 
     def test_aggressive_three_passes_removes_ai_markers(self) -> None:
         text = "Furthermore, AI is rapidly evolving. In conclusion, things look bright."
-        out = self._run_passes(text, passes=3, synonym_rate=0.85, merge_rate=0.60)
+        out = self._run_passes(text, passes=3, merge_rate=0.60)
         self.assertNotIn("furthermore", out.lower())
         self.assertNotIn("in conclusion", out.lower())
 
@@ -146,7 +126,7 @@ class TestMultiPassLogic(unittest.TestCase):
         total_merges = 0
         current = text
         for _ in range(3):
-            result = humanize(current, synonym_rate=0.85, merge_rate=0.60)
+            result = humanize(current, merge_rate=0.60)
             total_markers += result.markers_removed
             total_merges += result.sentences_merged
             current = result.humanized_text
@@ -160,7 +140,7 @@ class TestMultiPassLogic(unittest.TestCase):
         presets = self._PRESETS
         self.assertLess(presets["Light"]["passes"], presets["Medium"]["passes"])
         self.assertLess(presets["Medium"]["passes"], presets["Aggressive"]["passes"])
-        self.assertLess(presets["Light"]["synonym_rate"], presets["Aggressive"]["synonym_rate"])
+        self.assertLess(presets["Light"]["merge_rate"], presets["Aggressive"]["merge_rate"])
 
     def test_medium_two_passes_produces_output(self) -> None:
         text = "AI systems are becoming incredibly powerful and highly advanced."
@@ -172,24 +152,22 @@ class TestMultiPassLogic(unittest.TestCase):
         out = self._run_passes(text, **self._PRESETS["Aggressive"])
         self.assertTrue(out.strip())
 
-    def test_first_pass_only_synonym_logic_preserves_blacklisted_words(self) -> None:
-        """Blacklisted words must survive aggressive multi-pass processing."""
-        from aip.humanizer import humanize
+    def test_adversarial_mode_multi_pass(self) -> None:
+        """Adversarial mode must work correctly in multi-pass scenarios."""
+        from aip.humanizer import humanize, _ZWSP
 
         text = (
             "The social platform uses cloud systems. "
             "Data privacy is an ethical concern at the same time."
         )
         current = text
-        for pass_num in range(3):
-            sr = 0.40 if pass_num == 0 else 0.0
-            result = humanize(current, synonym_rate=sr, merge_rate=0.60)
+        for _ in range(3):
+            result = humanize(current, merge_rate=0.60, adversarial_mode=True)
             current = result.humanized_text
 
-        output = current.lower()
-        for word in ("social", "cloud", "data", "same"):
-            with self.subTest(word=word):
-                self.assertIn(word, output)
+        # Output should be non-empty and readable after stripping ZWSP
+        stripped = current.replace(_ZWSP, "")
+        self.assertTrue(stripped.strip())
 
 
 if __name__ == "__main__":

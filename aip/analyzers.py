@@ -1,9 +1,8 @@
 """Text analysis utilities for the AI Text Humanizer.
 
 This module provides heuristic text-feature extraction used by the
-evaluation pipeline and the readiness doctor command. All media-forensic
-logic (image, audio, video) has been removed; the platform now processes
-text exclusively.
+evaluation pipeline and the readiness doctor command.  All NLP processing
+is self-contained and requires no external libraries or data downloads.
 """
 
 from __future__ import annotations
@@ -16,13 +15,6 @@ from typing import Dict, List, Optional
 
 from .types import DetectionResult, Signal
 
-try:
-    import nltk
-
-    _NLTK_AVAILABLE = True
-except ImportError:  # pragma: no cover - optional dependency
-    _NLTK_AVAILABLE = False
-
 _TEXT_AI_MARKERS = (
     "as an ai language model",
     "i cannot browse",
@@ -33,30 +25,13 @@ _TEXT_AI_MARKERS = (
 
 
 def runtime_capabilities() -> Dict[str, bool]:
-    """Return a dict showing which NLP dependencies are available at runtime."""
-    wordnet_available = False
-    punkt_available = False
-
-    if _NLTK_AVAILABLE:
-        try:
-            nltk.data.find("corpora/wordnet.zip")
-            wordnet_available = True
-        except LookupError:
-            try:
-                nltk.data.find("corpora/wordnet")
-                wordnet_available = True
-            except LookupError:
-                pass
-        try:
-            nltk.data.find("tokenizers/punkt_tab")
-            punkt_available = True
-        except LookupError:
-            pass
-
+    """Return a dict showing which processing capabilities are available at runtime."""
     return {
-        "nltk": _NLTK_AVAILABLE,
-        "wordnet": wordnet_available,
-        "punkt": punkt_available,
+        "evasion_engine": True,
+        "zero_width_injection": True,
+        "homoglyph_swapping": True,
+        "contraction_manipulation": True,
+        "burstiness_variation": True,
     }
 
 

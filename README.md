@@ -1,30 +1,43 @@
 # AI Text Humanizer Platform
 
-A local, modular NLP pipeline that rewrites AI-generated text to read as
-naturally human-written – reducing AI-scanner detection scores by raising
-**burstiness** (sentence-length variance) and **perplexity** (vocabulary
-diversity) while removing common AI transition markers.
+A local, self-contained NLP pipeline that rewrites AI-generated text to read as
+naturally human-written – reducing AI-scanner detection scores using deterministic
+adversarial evasion techniques based on academic research into AI-detector
+vulnerabilities.
 
 ## Features
 
 - **AI marker stripping** – Removes common AI transition phrases such as
   *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
-- **Burstiness variation** – Merges adjacent sentences with natural conjunctions
-  to mimic the sentence-length variability of a human writer.
-- **Synonym substitution** – Swaps adjectives and adverbs with WordNet synonyms
-  to raise lexical perplexity without changing logical meaning.
+- **Burstiness variation** – Merges adjacent sentences with natural conjunctions,
+  em-dashes (`—`), and semicolons (`;`) to mimic the sentence-length variability
+  of a human writer and artificially increase the burstiness score.
+- **Contraction manipulation** – Randomly expands or contracts common phrases
+  (e.g. *"do not"* → *"don't"*, *"it is"* → *"it's"*) to alter the token count
+  and perplexity profile without changing the semantic meaning.
+- **Adversarial Mode** *(pentester toggle)* – Enables two additional evasion
+  techniques inspired by academic adversarial-ML research:
+  - **Zero-width space injection** – Inserts invisible U+200B characters inside
+    long words, breaking the byte-pair encoding (BPE) tokenisers used by AI
+    detectors (GPTZero, Turnitin) without affecting human readability.
+  - **Homoglyph swapping** – Replaces a small fraction (2–5 %) of Latin
+    characters with visually identical Cyrillic lookalikes (e.g. `a` → `а`,
+    `e` → `е`), making tokens unrecognisable to detector models while the text
+    looks 100 % normal to the human eye.
 - **Graphical User Interface (GUI)** – A dark-themed desktop app built with
   Python's built-in `tkinter` library. No extra GUI framework required.
   - **Bypass Strength selector** – choose how aggressively the tool humanizes
     your text with three one-click presets:
 
-    | Strength | Passes | Synonym Rate | Merge Rate | Best for |
-    |---|---|---|---|---|
-    | **Light** | 1 | 35 % | 25 % | Lightly AI-flavoured text |
-    | **Medium** | 2 | 60 % | 40 % | Moderate AI writing patterns |
-    | **Aggressive** | 3 | 85 % | 60 % | Heavy AI output; drops detection to ~0 % in one click |
-    | **Custom** | 1 | user-defined | user-defined | Fine-grained control via sliders |
+    | Strength | Passes | Merge Rate | Best for |
+    |---|---|---|---|
+    | **Light** | 1 | 30 % | Lightly AI-flavoured text |
+    | **Medium** | 2 | 45 % | Moderate AI writing patterns |
+    | **Aggressive** | 3 | 60 % | Heavy AI output; drops detection to ~0 % in one click |
+    | **Custom** | 1 | user-defined | Fine-grained control via slider |
 
+  - **Adversarial Mode checkbox** – enable zero-width space injection and
+    homoglyph swapping for maximum AI-detection evasion.
   - **Multi-pass engine** – the Aggressive preset silently runs the pipeline
     three times so you get near-zero AI detection in a single button press
     instead of pasting and re-running manually.
@@ -32,6 +45,8 @@ diversity) while removing common AI transition markers.
     clipboard.
 - **REST API** – optional FastAPI server for programmatic access.
 - **CLI** – full-featured command-line interface.
+- **No external dependencies** – no NLTK, no WordNet, no AI models, no internet
+  connection required. The entire evasion engine is self-contained.
 
 ## Project Standards
 
@@ -44,19 +59,23 @@ diversity) while removing common AI transition markers.
 
 ## How It Works
 
-The humanization pipeline applies four stages in sequence:
+The humanization pipeline applies four stages in sequence (plus two optional
+adversarial stages):
 
 1. **Marker stripping** – Removes common AI transition phrases such as
    *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
 2. **Sentence tokenisation** – Splits the cleaned text into individual
-   sentences using NLTK `sent_tokenize` (regex fallback when NLTK data is
-   absent).
+   sentences using a regex-based approach (no external libraries needed).
 3. **Burstiness variation** – Randomly merges adjacent sentences with a
-   natural conjunction (e.g. *" and "*, *" while "*, *" — "*) so that
-   sentence lengths vary the way a human writer's do.
-4. **Synonym substitution** – Replaces a configurable fraction of
-   adjectives and adverbs with WordNet synonyms to raise lexical
-   perplexity without altering the logical meaning.
+   natural conjunction, em-dash (`—`), or semicolon (`;`) so that sentence
+   lengths vary the way a human writer's do.
+4. **Contraction manipulation** – Randomly expands or contracts common
+   English phrases (e.g. *"it is"* ↔ *"it's"*) to alter the token count and
+   perplexity without changing meaning.
+5. *(Adversarial)* **Zero-width space injection** – Inserts invisible U+200B
+   characters inside long words to break AI-detector tokenisers.
+6. *(Adversarial)* **Homoglyph swapping** – Replaces a small fraction of Latin
+   characters with visually identical Cyrillic lookalikes.
 
 ## Install
 
@@ -65,11 +84,8 @@ cd /path/to/ai-text-humanizer
 pip install -e '.[api]'
 ```
 
-Download NLTK data once:
-
-```bash
-python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng
-```
+No additional data downloads are required. The evasion engine is fully
+self-contained and works out of the box.
 
 ### GUI dependencies
 
@@ -110,15 +126,16 @@ The app window opens immediately. Typical workflow:
 
 1. **Paste** your AI-generated text into the *Input Text* area on the left.
 2. **Select** a *Bypass Strength* preset in the centre panel:
-   - **Light** – one pass, conservative rates; good for lightly AI-flavoured text.
+   - **Light** – one pass, conservative merge rate; good for lightly AI-flavoured text.
    - **Medium** – two passes; suitable for most AI-generated content.
-   - **Aggressive** *(default)* – three passes at high rates; use this to drop
+   - **Aggressive** *(default)* – three passes at high merge rate; use this to drop
      AI detection to ~0 % in a single click.
-   - **Custom** – drag the *Synonym Rate* and *Merge Rate* sliders to any value
-     you prefer.
-3. Click **▶ Humanize** and wait a moment for the pipeline to finish.
-4. Read the result in the *Humanized Output* area on the right.
-5. Click **⎘ Copy Result** to copy the text directly to your clipboard.
+   - **Custom** – drag the *Merge Rate* slider to any value you prefer.
+3. Optionally check **Adversarial Mode** to enable zero-width space injection and
+   homoglyph swapping for maximum evasion (recommended for high-confidence AI text).
+4. Click **▶ Humanize** and wait a moment for the pipeline to finish.
+5. Read the result in the *Humanized Output* area on the right.
+6. Click **⎘ Copy Result** to copy the text directly to your clipboard.
 
 ## CLI Usage
 
@@ -132,7 +149,7 @@ Output example:
 
 ```json
 {
-  "humanized_text": "AI is rapidly evolving. Many businesses use it to automate daily tasks, meaning this saves them a considerable amount of time and money. The future of AI looks very auspicious.",
+  "humanized_text": "AI is rapidly evolving, meaning many businesses use it to automate daily tasks. This saves them a significant amount of time and money — the future of AI looks very promising.",
   "original_word_count": 42,
   "humanized_word_count": 38,
   "markers_removed": 3,
@@ -140,7 +157,17 @@ Output example:
 }
 ```
 
-### Check NLP dependencies
+### Humanize with adversarial mode
+
+```bash
+aip humanize --text "AI is rapidly evolving." --adversarial --pretty
+```
+
+The `--adversarial` flag enables zero-width space injection and homoglyph
+swapping. The output looks identical to a human reader but breaks AI-detector
+tokenisers.
+
+### Check capabilities
 
 ```bash
 aip doctor --pretty
@@ -167,8 +194,8 @@ curl -X POST http://localhost:8000/humanize \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Furthermore, AI is rapidly evolving. It is important to note that many businesses already use it.",
-    "synonym_rate": 0.35,
     "merge_rate": 0.25,
+    "adversarial_mode": false,
     "seed": 42
   }'
 ```
@@ -192,7 +219,7 @@ Response:
 | Endpoint     | Method | Description                              |
 |--------------|--------|------------------------------------------|
 | `/healthz`   | GET    | Liveness check                           |
-| `/readyz`    | GET    | Readiness check with NLP capability info |
+| `/readyz`    | GET    | Readiness check                          |
 | `/doctor`    | GET    | Runtime capability details               |
 | `/policies`  | GET    | Active configuration limits              |
 | `/metrics`   | GET    | Request and latency metrics              |
@@ -220,11 +247,21 @@ Key variables:
 ```python
 from aip.humanizer import humanize
 
+# Standard humanization (preserves meaning, no adversarial techniques)
 result = humanize(
     text="Furthermore, it is important to note that AI is transforming industries.",
-    synonym_rate=0.35,
     merge_rate=0.25,
     seed=42,
+)
+
+# Adversarial mode (adds zero-width spaces and homoglyph swaps for maximum evasion)
+result = humanize(
+    text="Furthermore, it is important to note that AI is transforming industries.",
+    merge_rate=0.25,
+    seed=42,
+    adversarial_mode=True,
+    adversarial_zws_rate=0.15,       # 15 % of long words get a ZWSP
+    adversarial_homoglyph_rate=0.03, # 3 % of eligible chars get a Cyrillic lookalike
 )
 
 print(result.humanized_text)

@@ -3,7 +3,8 @@
 Tests cover:
 - AI marker stripping (normal, edge-case, case-insensitive, multiple markers)
 - Sentence burstiness variation (merging, no-merge, edge cases)
-- Synonym substitution (NLTK-backed or regex fallback)
+- Contraction manipulation (expand / contract)
+- Adversarial evasion (zero-width space injection, homoglyph swapping)
 - Full humanize() pipeline (word counts, metadata, determinism, edge cases)
 """
 
@@ -14,12 +15,14 @@ import unittest
 
 from aip.humanizer import (
     HumanizeResult,
-    _MAX_SYNONYM_RATE,
-    _SYNONYM_BLACKLIST,
+    _HOMOGLYPH_MAP,
+    _ZWSP,
     _capitalize_sentences,
+    apply_contractions,
+    apply_homoglyph_swaps,
     humanize,
+    inject_zero_width_spaces,
     strip_ai_markers,
-    substitute_synonyms,
     vary_sentence_lengths,
 )
 
@@ -142,7 +145,7 @@ class TestVarySentenceLengths(unittest.TestCase):
         rng = random.Random(0)
         merged, _ = vary_sentence_lengths(sentences, merge_rate=1.0, rng=rng)
         text = merged[0]
-        found_conjunction = any(conjunction.strip() in text for conjunction in [" and ", " while ", "meaning", "—", "which"])
+        found_conjunction = any(conjunction.strip() in text for conjunction in [" and ", " while ", "meaning", "—", "which", ";"])
         self.assertTrue(found_conjunction)
 
     def test_total_word_count_preserved_approximately(self) -> None:
@@ -161,26 +164,89 @@ class TestVarySentenceLengths(unittest.TestCase):
         self.assertEqual(len(merged), 2)
 
 
-class TestSubstituteSynonyms(unittest.TestCase):
+class TestApplyContractions(unittest.TestCase):
     def test_returns_string(self) -> None:
-        result = substitute_synonyms("The quick brown fox.", swap_rate=0.0)
+        result = apply_contractions("The sky is blue.", rng=random.Random(0))
         self.assertIsInstance(result, str)
 
-    def test_swap_rate_zero_leaves_text_unchanged(self) -> None:
-        text = "The quick brown fox jumps."
-        result = substitute_synonyms(text, swap_rate=0.0, rng=random.Random(0))
-        self.assertEqual(result, text)
-
     def test_empty_string_returns_empty(self) -> None:
-        result = substitute_synonyms("", swap_rate=0.5)
+        result = apply_contractions("", rng=random.Random(0))
         self.assertEqual(result, "")
 
-    def test_nouns_and_verbs_preserved(self) -> None:
-        # Nouns like "Python" and "language" should never be swapped
-        text = "Python is a programming language used worldwide."
-        result = substitute_synonyms(text, swap_rate=1.0, rng=random.Random(42))
-        self.assertIn("Python", result)
-        self.assertIn("language", result)
+    def test_deterministic_with_seed(self) -> None:
+        text = "It is important that we do not forget this."
+        r1 = apply_contractions(text, rng=random.Random(42))
+        r2 = apply_contractions(text, rng=random.Random(42))
+        self.assertEqual(r1, r2)
+
+    def test_does_not_change_meaning(self) -> None:
+        text = "We cannot do this."
+        result = apply_contractions(text, rng=random.Random(5))
+        # Whether expanded or contracted the core words must be present
+        self.assertTrue("can" in result.lower() or "cannot" in result.lower() or "can't" in result.lower())
+
+
+class TestInjectZeroWidthSpaces(unittest.TestCase):
+    def test_returns_string(self) -> None:
+        result = inject_zero_width_spaces("technology is advancing", rate=1.0, rng=random.Random(0))
+        self.assertIsInstance(result, str)
+
+    def test_zwsp_injected_into_long_words(self) -> None:
+        text = "technology"  # 10 chars, above _ZWS_MIN_WORD_LEN (6)
+        result = inject_zero_width_spaces(text, rate=1.0, rng=random.Random(0))
+        self.assertIn(_ZWSP, result)
+
+    def test_short_words_not_injected(self) -> None:
+        # "cat" (3 chars) is below the threshold
+        result = inject_zero_width_spaces("cat dog", rate=1.0, rng=random.Random(0))
+        self.assertNotIn(_ZWSP, result)
+
+    def test_rate_zero_injects_nothing(self) -> None:
+        result = inject_zero_width_spaces("technology advancement", rate=0.0, rng=random.Random(0))
+        self.assertNotIn(_ZWSP, result)
+
+    def test_visually_intact(self) -> None:
+        # Removing ZWSP should yield the original word
+        text = "technology"
+        result = inject_zero_width_spaces(text, rate=1.0, rng=random.Random(0))
+        stripped = result.replace(_ZWSP, "")
+        self.assertEqual(stripped, text)
+
+    def test_deterministic_with_seed(self) -> None:
+        text = "This technology is advancing rapidly today."
+        r1 = inject_zero_width_spaces(text, rate=0.5, rng=random.Random(7))
+        r2 = inject_zero_width_spaces(text, rate=0.5, rng=random.Random(7))
+        self.assertEqual(r1, r2)
+
+
+class TestApplyHomoglyphSwaps(unittest.TestCase):
+    def test_returns_string(self) -> None:
+        result = apply_homoglyph_swaps("Hello world", rate=0.03, rng=random.Random(0))
+        self.assertIsInstance(result, str)
+
+    def test_rate_zero_no_swaps(self) -> None:
+        text = "Hello world"
+        result = apply_homoglyph_swaps(text, rate=0.0, rng=random.Random(0))
+        self.assertEqual(result, text)
+
+    def test_rate_one_swaps_all_eligible_chars(self) -> None:
+        text = "ace"  # all three chars are in _HOMOGLYPH_MAP
+        result = apply_homoglyph_swaps(text, rate=1.0, rng=random.Random(0))
+        for char in text:
+            cyrillic = _HOMOGLYPH_MAP.get(char)
+            if cyrillic:
+                self.assertIn(cyrillic, result)
+
+    def test_length_preserved(self) -> None:
+        text = "Hello world, this is a test."
+        result = apply_homoglyph_swaps(text, rate=0.5, rng=random.Random(0))
+        self.assertEqual(len(result), len(text))
+
+    def test_deterministic_with_seed(self) -> None:
+        text = "The quick brown fox jumps over the lazy dog."
+        r1 = apply_homoglyph_swaps(text, rate=0.1, rng=random.Random(42))
+        r2 = apply_homoglyph_swaps(text, rate=0.1, rng=random.Random(42))
+        self.assertEqual(r1, r2)
 
 
 class TestCapitalizeSentences(unittest.TestCase):
@@ -245,7 +311,6 @@ class TestHumanizePipeline(unittest.TestCase):
     def test_preserves_core_nouns(self) -> None:
         text = "Python is a programming language. It is widely used."
         result = humanize(text, seed=7)
-        # Proper nouns should survive because they are tagged NNP, not JJ/RB
         self.assertIn("Python", result.humanized_text)
 
     def test_seed_produces_deterministic_output(self) -> None:
@@ -262,9 +327,6 @@ class TestHumanizePipeline(unittest.TestCase):
         )
         result1 = humanize(text, seed=0)
         result2 = humanize(text, seed=99)
-        # With multiple sentences and synonym substitution there is a high
-        # chance two different seeds produce different text; not guaranteed
-        # but a useful sanity check.
         self.assertIsInstance(result1.humanized_text, str)
         self.assertIsInstance(result2.humanized_text, str)
 
@@ -294,14 +356,6 @@ class TestHumanizePipeline(unittest.TestCase):
         self.assertTrue(result.humanized_text.strip())
         self.assertEqual(result.sentences_merged, 0)
 
-    def test_synonym_rate_zero_does_not_change_words(self) -> None:
-        text = "The sky is blue and the grass is green."
-        result = humanize(text, synonym_rate=0.0, merge_rate=0.0, seed=0)
-        # With no swaps and no merges only marker-stripping and
-        # capitalisation can alter the text
-        self.assertIn("blue", result.humanized_text.lower())
-        self.assertIn("green", result.humanized_text.lower())
-
     def test_metadata_word_counts_are_integers(self) -> None:
         result = humanize("Some sample text here.", seed=0)
         self.assertIsInstance(result.original_word_count, int)
@@ -316,46 +370,46 @@ class TestHumanizePipeline(unittest.TestCase):
         self.assertIsInstance(result.sentences_merged, int)
 
 
-class TestSynonymSafetyGuards(unittest.TestCase):
-    """Tests for the synonym blacklist and rate-capping safety measures."""
+class TestAdversarialMode(unittest.TestCase):
+    """Tests for adversarial evasion features in the humanize() pipeline."""
 
-    def test_blacklisted_words_are_never_swapped(self) -> None:
-        """Context-critical blacklisted words must survive at swap_rate=1.0."""
-        critical_words = ["same", "social", "cloud", "digital", "data", "privacy"]
-        for word in critical_words:
-            text = f"The {word} system works well."
-            result = substitute_synonyms(text, swap_rate=1.0, rng=random.Random(0))
-            with self.subTest(word=word):
-                self.assertIn(word, result.lower())
+    def test_adversarial_mode_off_no_zwsp(self) -> None:
+        """Zero-width spaces must not appear when adversarial_mode=False."""
+        text = "Artificial intelligence is advancing quickly. Technology drives innovation."
+        result = humanize(text, seed=0, adversarial_mode=False)
+        self.assertNotIn(_ZWSP, result.humanized_text)
 
-    def test_synonym_rate_capped_at_max(self) -> None:
-        """swap_rate values above _MAX_SYNONYM_RATE must be clamped."""
-        # With a very high requested rate the function must still return a
-        # grammatically intact string (not raise, not return empty).
-        text = "The quick brown fox jumps over the lazy dog."
-        result = substitute_synonyms(text, swap_rate=0.99, rng=random.Random(42))
-        self.assertIsInstance(result, str)
-        self.assertTrue(result.strip())
+    def test_adversarial_mode_on_injects_zwsp(self) -> None:
+        """With adversarial_mode=True and high ZWS rate, ZWSP must be present."""
+        text = "Artificial intelligence is advancing quickly. Technology drives innovation."
+        result = humanize(text, seed=0, adversarial_mode=True, adversarial_zws_rate=1.0)
+        self.assertIn(_ZWSP, result.humanized_text)
 
-    def test_max_synonym_rate_value(self) -> None:
-        """_MAX_SYNONYM_RATE must not exceed the documented safe threshold."""
-        self.assertLessEqual(_MAX_SYNONYM_RATE, 0.40)
+    def test_adversarial_mode_text_readable_after_stripping_zwsp(self) -> None:
+        """Removing ZWSPs from adversarial output should yield normal-looking text."""
+        text = "Technology is transforming communication and education worldwide."
+        result = humanize(text, seed=5, adversarial_mode=True, adversarial_zws_rate=1.0)
+        stripped = result.humanized_text.replace(_ZWSP, "")
+        # Basic readability: must contain at least some original words
+        self.assertIn("transform", stripped.lower())
 
-    def test_blacklist_contains_key_words(self) -> None:
-        """Spot-check that the expected words are in the blacklist."""
-        expected = {"same", "social", "cloud", "digital", "data", "privacy", "ethical"}
-        for word in expected:
-            with self.subTest(word=word):
-                self.assertIn(word, _SYNONYM_BLACKLIST)
+    def test_adversarial_mode_homoglyph_swaps_present(self) -> None:
+        """With rate=1.0, every eligible Latin character must be replaced."""
+        text = "ace"  # all three chars are in _HOMOGLYPH_MAP
+        result = apply_homoglyph_swaps(text, rate=1.0, rng=random.Random(0))
+        # Result must differ from input (Cyrillic lookalikes)
+        self.assertNotEqual(result, text)
 
-    def test_humanize_preserves_blacklisted_words_at_high_rate(self) -> None:
-        """Full pipeline must not replace blacklisted words even at Aggressive rates."""
-        text = "The social platform uses cloud systems to store data in the same way."
-        result = humanize(text, synonym_rate=0.40, merge_rate=0.60, seed=0)
-        output = result.humanized_text.lower()
-        for word in ("social", "cloud", "data", "same"):
-            with self.subTest(word=word):
-                self.assertIn(word, output)
+    def test_adversarial_mode_deterministic(self) -> None:
+        """Adversarial output must be reproducible with the same seed."""
+        text = "AI systems are becoming increasingly sophisticated and powerful."
+        r1 = humanize(text, seed=99, adversarial_mode=True)
+        r2 = humanize(text, seed=99, adversarial_mode=True)
+        self.assertEqual(r1.humanized_text, r2.humanized_text)
+
+    def test_adversarial_mode_pipeline_returns_humanize_result(self) -> None:
+        result = humanize("Furthermore, AI is evolving fast.", adversarial_mode=True, seed=0)
+        self.assertIsInstance(result, HumanizeResult)
 
 
 if __name__ == "__main__":

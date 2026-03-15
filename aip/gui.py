@@ -3,7 +3,9 @@
 Provides a desktop window with:
   - An input text area for pasting AI-generated text.
   - A Bypass Strength selector (Light / Medium / Aggressive / Custom).
-  - Synonym-rate and merge-rate sliders (active only in Custom mode).
+  - A merge-rate slider (active only in Custom mode).
+  - An Adversarial Mode checkbox that enables zero-width space injection and
+    homoglyph swapping for maximum AI-detection evasion.
   - A "Humanize" button that calls the core pipeline (multi-pass for
     Medium and Aggressive strengths).
   - An output text area showing the humanized result.
@@ -48,14 +50,11 @@ _PLACEHOLDER_INPUT = (
 # ---------------------------------------------------------------------------
 
 # Each preset defines the number of sequential humanize() passes and the
-# synonym / merge rates.  synonym_rate is only applied on the *first* pass;
-# subsequent passes use merge/structural variation only (synonym_rate=0.0).
-# synonym_rate is capped at _MAX_SYNONYM_RATE (0.40) in the core pipeline;
-# the values below reflect that safe ceiling.
+# merge rate.  Adversarial mode is controlled separately via the GUI checkbox.
 _BYPASS_PRESETS: dict[str, dict[str, int | float] | None] = {
-    "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30},
-    "Medium":     {"passes": 2, "synonym_rate": 0.35, "merge_rate": 0.45},
-    "Aggressive": {"passes": 3, "synonym_rate": 0.40, "merge_rate": 0.60},
+    "Light":      {"passes": 1, "merge_rate": 0.30},
+    "Medium":     {"passes": 2, "merge_rate": 0.45},
+    "Aggressive": {"passes": 3, "merge_rate": 0.60},
     "Custom":     None,  # uses the manual slider values
 }
 
@@ -102,10 +101,10 @@ class HumanizerApp:
         self._root.columnconfigure(0, weight=1)
         self._root.rowconfigure(1, weight=1)
 
-        self._synonym_rate = tk.DoubleVar(value=0.35)
         self._merge_rate = tk.DoubleVar(value=0.25)
         self._status_text = tk.StringVar(value="Ready.")
         self._bypass_strength = tk.StringVar(value=_DEFAULT_STRENGTH)
+        self._adversarial_mode = tk.BooleanVar(value=False)
 
         self._build_header()
         self._build_body()
@@ -221,22 +220,6 @@ class HumanizerApp:
 
         tk.Frame(controls, bg=_BORDER, height=1).pack(fill=tk.X, pady=(8, 0))
 
-        # -- Synonym rate
-        tk.Label(controls, text="Synonym Rate", **lbl_style).pack(
-            anchor="w", pady=(8, 0)
-        )
-        self._syn_val_lbl = tk.Label(
-            controls, textvariable=self._synonym_rate, **val_style
-        )
-        self._syn_val_lbl.pack(anchor="e")
-        self._syn_slider = tk.Scale(
-            controls,
-            variable=self._synonym_rate,
-            command=lambda _v: self._update_slider_labels(),
-            **slider_style,
-        )
-        self._syn_slider.pack(fill=tk.X)
-
         # -- Merge rate
         tk.Label(controls, text="Merge Rate", **lbl_style).pack(
             anchor="w", pady=(8, 0)
@@ -252,6 +235,33 @@ class HumanizerApp:
             **slider_style,
         )
         self._merge_slider.pack(fill=tk.X)
+
+        tk.Frame(controls, bg=_BORDER, height=1).pack(fill=tk.X, pady=(8, 0))
+
+        # -- Adversarial Mode checkbox
+        tk.Label(controls, text="Evasion Options", **lbl_style).pack(
+            anchor="w", pady=(8, 2)
+        )
+        tk.Checkbutton(
+            controls,
+            text="Adversarial Mode",
+            variable=self._adversarial_mode,
+            bg=_DARK_BG,
+            fg=_TEXT_FG,
+            selectcolor=_PANEL_BG,
+            activebackground=_DARK_BG,
+            activeforeground=_ACCENT,
+            highlightthickness=0,
+            anchor="w",
+        ).pack(fill=tk.X)
+        tk.Label(
+            controls,
+            text="(ZWS + homoglyphs)",
+            bg=_DARK_BG,
+            fg=_MUTED_FG,
+            font=("Helvetica", 8),
+            anchor="w",
+        ).pack(anchor="w")
 
         # Apply initial preset to sliders
         self._on_bypass_change()
@@ -354,9 +364,6 @@ class HumanizerApp:
             self._input_text.configure(fg=_TEXT_FG)
 
     def _update_slider_labels(self) -> None:
-        self._syn_val_lbl.configure(
-            text=f"{self._synonym_rate.get():.2f}"
-        )
         self._merge_val_lbl.configure(
             text=f"{self._merge_rate.get():.2f}"
         )
@@ -367,14 +374,11 @@ class HumanizerApp:
         preset = _BYPASS_PRESETS.get(strength)
         if preset is not None:
             # Apply preset rates to sliders
-            self._synonym_rate.set(preset["synonym_rate"])
             self._merge_rate.set(preset["merge_rate"])
-            # Disable sliders – rates are managed by the preset
-            self._syn_slider.configure(state=tk.DISABLED)
+            # Disable slider – rate is managed by the preset
             self._merge_slider.configure(state=tk.DISABLED)
         else:
-            # Custom: let the user control the sliders freely
-            self._syn_slider.configure(state=tk.NORMAL)
+            # Custom: let the user control the slider freely
             self._merge_slider.configure(state=tk.NORMAL)
         self._update_slider_labels()
 
@@ -405,37 +409,28 @@ class HumanizerApp:
         thread.start()
 
     def _humanize_worker(self, text: str) -> None:
-        """Run humanize() (possibly multiple passes) in a background thread.
-
-        Synonym substitution is applied only on the *first* pass to avoid
-        compounding WordNet quirks across passes.  Subsequent passes rely
-        solely on structural variation (sentence merging and marker stripping).
-        """
+        """Run humanize() (possibly multiple passes) in a background thread."""
         try:
             strength = self._bypass_strength.get()
             preset = _BYPASS_PRESETS.get(strength)
             if preset is not None:
                 passes = int(preset["passes"])
-                synonym_rate = float(preset["synonym_rate"])
                 merge_rate = float(preset["merge_rate"])
             else:
                 passes = 1
-                synonym_rate = self._synonym_rate.get()
                 merge_rate = self._merge_rate.get()
 
+            adversarial = self._adversarial_mode.get()
             current_text = text
             result = None
             total_markers_removed = 0
             total_sentences_merged = 0
 
-            for pass_num in range(passes):
-                # Only apply synonym swapping on the first pass so that
-                # successive passes use structural variation (merging) only.
-                current_synonym_rate = synonym_rate if pass_num == 0 else 0.0
+            for _ in range(passes):
                 result = humanize(
                     current_text,
-                    synonym_rate=current_synonym_rate,
                     merge_rate=merge_rate,
+                    adversarial_mode=adversarial,
                 )
                 total_markers_removed += result.markers_removed
                 total_sentences_merged += result.sentences_merged

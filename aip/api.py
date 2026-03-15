@@ -25,9 +25,9 @@ except Exception as exc:  # pragma: no cover - only imported during runtime
 
 class HumanizeRequest(BaseModel):
     text: str = Field(..., description="AI-generated text to humanize")
-    synonym_rate: float = Field(default=0.35, ge=0.0, le=1.0, description="Fraction of adjectives/adverbs to swap")
     merge_rate: float = Field(default=0.25, ge=0.0, le=1.0, description="Probability of merging adjacent sentences")
     seed: Optional[int] = Field(default=None, description="Optional random seed for reproducible output")
+    adversarial_mode: bool = Field(default=False, description="Enable zero-width space injection and homoglyph swapping")
 
 
 class HumanizeResponse(BaseModel):
@@ -128,22 +128,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz")
     def readyz() -> dict:
-        caps = runtime_capabilities()
-        degraded_reasons = []
-        if not caps.get("nltk"):
-            degraded_reasons.append("nltk_unavailable")
-        if not caps.get("wordnet"):
-            degraded_reasons.append("wordnet_data_missing")
-        if not caps.get("punkt"):
-            degraded_reasons.append("punkt_tokenizer_missing")
-
-        status = "ready_degraded" if degraded_reasons else "ready"
         return {
-            "status": status,
+            "status": "ready",
             "service": "ai-text-humanizer",
             "version": cfg.app_version,
-            "degraded_reasons": degraded_reasons,
-            "runtime_capabilities": caps,
+            "degraded_reasons": [],
         }
 
     @app.get("/doctor")
@@ -151,9 +140,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "runtime_capabilities": runtime_capabilities(),
             "notes": [
-                "All NLP processing is performed locally; no external API required.",
-                "Install NLTK data with: python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng",
-                "Missing NLTK data falls back to regex-based processing with reduced quality.",
+                "All NLP processing is performed locally; no external API or download required.",
+                "The evasion engine uses zero-width spaces, homoglyph swapping, contraction",
+                "manipulation, and burstiness variation — no NLTK or WordNet dependency.",
             ],
         }
 
@@ -202,9 +191,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             result: HumanizeResult = humanize(
                 text=payload.text,
-                synonym_rate=payload.synonym_rate,
                 merge_rate=payload.merge_rate,
                 seed=payload.seed,
+                adversarial_mode=payload.adversarial_mode,
             )
 
             event.update(

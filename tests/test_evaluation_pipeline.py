@@ -62,9 +62,9 @@ class CliHumanizeTests(unittest.TestCase):
         out = self._run_cli("doctor")
         self.assertIn("runtime_capabilities", out)
         caps = out["runtime_capabilities"]
-        self.assertIn("nltk", caps)
-        self.assertIn("wordnet", caps)
-        self.assertIn("punkt", caps)
+        self.assertIn("evasion_engine", caps)
+        self.assertIn("zero_width_injection", caps)
+        self.assertIn("homoglyph_swapping", caps)
 
 
 class ApiRouteTests(unittest.TestCase):
@@ -87,7 +87,6 @@ class ApiRouteTests(unittest.TestCase):
         r = self.client.get("/readyz")
         self.assertEqual(r.status_code, 200)
         self.assertIn("status", r.json())
-        self.assertIn("runtime_capabilities", r.json())
 
     def test_humanize_endpoint_success(self) -> None:
         r = self.client.post(
