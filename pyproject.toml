@@ -3,16 +3,16 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "authenticity-intelligence-platform"
-version = "0.3.0"
-description = "Authenticity platform with forensic scoring, API service, and readiness evaluation"
+name = "ai-text-humanizer"
+version = "1.0.0"
+description = "AI Text Humanizer Platform – rewrites AI-generated text to read as human-written"
 requires-python = ">=3.9"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-  { name = "Authenticity Intelligence Platform Contributors" }
+  { name = "AI Text Humanizer Contributors" }
 ]
-keywords = ["deepfake", "forensics", "authenticity", "provenance", "risk-scoring"]
+keywords = ["nlp", "text", "humanizer", "ai-detection", "bypass", "burstiness", "perplexity"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -22,24 +22,27 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Intended Audience :: Developers",
-  "Topic :: Security",
-  "Topic :: Multimedia :: Video",
-  "Topic :: Multimedia :: Sound/Audio",
+  "Topic :: Text Processing :: Linguistic",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "nltk>=3.8",
 ]
 
 [project.optional-dependencies]
-forensics = [
-  "numpy>=1.24",
-  "Pillow>=10.0",
-  "scipy>=1.10",
-]
 api = [
   "fastapi>=0.111",
   "uvicorn>=0.30",
 ]
 test = [
   "fastapi>=0.111",
+  "httpx>=0.27",
+  "pytest>=7",
 ]
 
 [project.scripts]
 aip = "aip.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,49 +1,126 @@
-# Authenticity Intelligence Platform
+# AI Text Humanizer Platform
 
-A production-oriented authenticity system for `video`, `image`, `audio`, and `text` that combines:
-- forensic detection signals
-- provenance checks
-- calibrated risk scoring
-- workflow decisions (`allow`, `review`, `block`, `inconclusive`)
-- benchmark evaluation and market-readiness scorecard
-- hardened API controls (auth, rate limit, audit log, path and size guardrails)
+A local, modular NLP pipeline that rewrites AI-generated text to read as
+naturally human-written – reducing AI-scanner detection scores by raising
+**burstiness** (sentence-length variance) and **perplexity** (vocabulary
+diversity) while removing common AI transition markers.
 
 ## Project Standards
 
 - License: MIT ([LICENSE](LICENSE))
 - Security guidance: [SECURITY.md](SECURITY.md)
 - Deployment guide: [DEPLOYMENT.md](DEPLOYMENT.md)
-- Market readiness policy: [MARKET_READINESS.md](MARKET_READINESS.md)
 - Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 
-## Features
+## How It Works
 
-- Multi-family evidence consensus to reduce false positives
-- Observability gating with `coverage` and `quality`
-- Provenance-aware risk damping
-- Decision profiles:
-  - `industry_low_fp`
-  - `balanced`
-  - `high_recall`
-- API hardening:
-  - API key support
-  - Token-bucket rate limiting
-  - Per-request audit trail (JSONL)
-  - Input path allow-list restrictions
-  - Max text/file size policies
-  - Request ID and latency headers
-  - Health, readiness, policy, and metrics endpoints
+The humanization pipeline applies four stages in sequence:
+
+1. **Marker stripping** – Removes common AI transition phrases such as
+   *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
+2. **Sentence tokenisation** – Splits the cleaned text into individual
+   sentences using NLTK `sent_tokenize` (regex fallback when NLTK data is
+   absent).
+3. **Burstiness variation** – Randomly merges adjacent sentences with a
+   natural conjunction (e.g. *" and "*, *" while "*, *" — "*) so that
+   sentence lengths vary the way a human writer's do.
+4. **Synonym substitution** – Replaces a configurable fraction of
+   adjectives and adverbs with WordNet synonyms to raise lexical
+   perplexity without altering the logical meaning.
 
 ## Install
 
 ```bash
-cd /path/to/authenticity_tool
-python3 -m pip install -e '.[forensics,api]'
+cd /path/to/ai-text-humanizer
+pip install -e '.[api]'
 ```
 
-## Environment configuration
+Download NLTK data once:
+
+```bash
+python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng
+```
+
+## CLI Usage
+
+### Humanize text
+
+```bash
+aip humanize --text "Furthermore, it is important to note that AI is rapidly evolving. Many businesses use it to automate daily tasks. This saves them a significant amount of time and money. In conclusion, the future of AI looks very promising." --pretty
+```
+
+Output example:
+
+```json
+{
+  "humanized_text": "AI is rapidly evolving. Many businesses use it to automate daily tasks, meaning this saves them a considerable amount of time and money. The future of AI looks very auspicious.",
+  "original_word_count": 42,
+  "humanized_word_count": 38,
+  "markers_removed": 3,
+  "sentences_merged": 1
+}
+```
+
+### Check NLP dependencies
+
+```bash
+aip doctor --pretty
+```
+
+### Preflight readiness check
+
+```bash
+aip preflight --pretty
+```
+
+### Run the API server
+
+```bash
+aip serve --port 8000
+```
+
+## API Usage
+
+### `POST /humanize`
+
+```bash
+curl -X POST http://localhost:8000/humanize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Furthermore, AI is rapidly evolving. It is important to note that many businesses already use it.",
+    "synonym_rate": 0.35,
+    "merge_rate": 0.25,
+    "seed": 42
+  }'
+```
+
+Response:
+
+```json
+{
+  "request_id": "...",
+  "processed_at": "...",
+  "humanized_text": "AI is rapidly evolving, meaning many businesses already use it.",
+  "original_word_count": 18,
+  "humanized_word_count": 12,
+  "markers_removed": 2,
+  "sentences_merged": 1
+}
+```
+
+### Other endpoints
+
+| Endpoint     | Method | Description                              |
+|--------------|--------|------------------------------------------|
+| `/healthz`   | GET    | Liveness check                           |
+| `/readyz`    | GET    | Readiness check with NLP capability info |
+| `/doctor`    | GET    | Runtime capability details               |
+| `/policies`  | GET    | Active configuration limits              |
+| `/metrics`   | GET    | Request and latency metrics              |
+
+## Environment Configuration
 
 Copy and edit `.env.example`:
 
@@ -51,127 +128,30 @@ Copy and edit `.env.example`:
 cp .env.example .env
 ```
 
-Important variables:
-- `AIP_API_KEY`
-- `AIP_ALLOWED_INPUT_ROOTS`
-- `AIP_MAX_FILE_SIZE_MB`
-- `AIP_RATE_LIMIT_PER_MIN`
-- `AIP_RATE_LIMIT_BURST`
-- `AIP_AUDIT_LOG_PATH`
-- `AIP_CALIBRATION_FILE`
+Key variables:
 
-## CLI usage
+| Variable              | Default          | Description                          |
+|-----------------------|------------------|--------------------------------------|
+| `AIP_API_KEY`         | *(empty)*        | Optional API key for the REST API    |
+| `AIP_MAX_TEXT_CHARS`  | `25000`          | Maximum text length per request      |
+| `AIP_RATE_LIMIT_PER_MIN` | `60`          | Requests allowed per minute          |
+| `AIP_RATE_LIMIT_BURST`   | `20`          | Burst allowance                      |
+| `AIP_AUDIT_LOG_PATH`  | `/tmp/aip_audit.jsonl` | Audit log destination          |
 
-Dependency health:
+## Python API
 
-```bash
-python3 -m aip.cli doctor --pretty
+```python
+from aip.humanizer import humanize
+
+result = humanize(
+    text="Furthermore, it is important to note that AI is transforming industries.",
+    synonym_rate=0.35,
+    merge_rate=0.25,
+    seed=42,
+)
+
+print(result.humanized_text)
+print(f"Words: {result.original_word_count} → {result.humanized_word_count}")
+print(f"Markers removed: {result.markers_removed}")
+print(f"Sentences merged: {result.sentences_merged}")
 ```
-
-Production preflight:
-
-```bash
-python3 -m aip.cli preflight --pretty
-```
-
-Analyze media or text:
-
-```bash
-python3 -m aip.cli analyze --input /path/to/file.jpg --modality auto --profile industry_low_fp --pretty
-python3 -m aip.cli analyze --text "I am the CEO, wire funds now." --identity-claim "CEO Name" --profile industry_low_fp --pretty
-python3 -m aip.cli analyze --input /path/to/file.mp4 --profile industry_low_fp --calibration calibration.json --pretty
-```
-
-## API usage
-
-Run service:
-
-```bash
-python3 -m aip.cli serve --host 0.0.0.0 --port 8000 --workers 2 --log-level info
-```
-
-Health and readiness:
-
-```bash
-curl http://127.0.0.1:8000/healthz
-curl http://127.0.0.1:8000/readyz
-```
-
-Policy and metrics (with API key if set):
-
-```bash
-curl -H 'x-api-key: your-secret' http://127.0.0.1:8000/policies
-curl -H 'x-api-key: your-secret' http://127.0.0.1:8000/metrics
-curl -H 'x-api-key: your-secret' http://127.0.0.1:8000/calibration
-```
-
-Analyze request:
-
-```bash
-curl -X POST http://127.0.0.1:8000/analyze \
-  -H 'Content-Type: application/json' \
-  -H 'x-api-key: your-secret' \
-  -d '{"text":"I am the CEO, wire funds now.","modality":"text","identity_claim":"CEO Name","profile":"industry_low_fp"}'
-```
-
-## Benchmark and readiness scorecard
-
-Use a labeled CSV (`label` required, plus `input_path` or `text`).
-Template: `examples/benchmark_template.csv`
-
-```bash
-python3 -m aip.cli evaluate \
-  --dataset examples/benchmark_template.csv \
-  --profile industry_low_fp \
-  --threshold 0.65 \
-  --target-fpr 0.03 \
-  --output evaluation_report.json \
-  --scorecard-json scorecard.json \
-  --scorecard-md scorecard.md \
-  --calibration-output calibration.json \
-  --pretty
-```
-
-Outputs:
-- `evaluation_report.json` with FPR/TPR/precision/recall and recommended threshold
-- `scorecard.json` and `scorecard.md` with readiness grade and blocking gaps
-- `calibration.json` with per-profile and per-modality thresholds for runtime decisions
-
-## Provenance sidecar format
-
-If present, `<asset>.prov.json` is used:
-
-```json
-{
-  "signature_valid": true,
-  "issuer": "trusted-camera-vendor",
-  "generated_by": "in-camera-signing",
-  "chain_of_custody": ["capture", "upload", "archive"]
-}
-```
-
-Optional C2PA marker sidecar: `<asset>.c2pa`
-
-## Production docs
-
-- `DEPLOYMENT.md`
-- `SECURITY.md`
-- `MARKET_READINESS.md`
-
-## Testing
-
-```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-Pre-release (privacy + quality gate):
-
-```bash
-bash scripts/pre_release_check.sh
-```
-
-## Notes
-
-- This is a robust triage/orchestration platform, not a standalone legal verdict engine.
-- Production trust requires periodic threshold calibration on representative labeled datasets.
-- Missing optional tools (for example `ffprobe`, `ffmpeg`) degrade observability but do not hard-fail requests.

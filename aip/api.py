@@ -1,16 +1,16 @@
+"""FastAPI application for the AI Text Humanizer Platform."""
+
 from __future__ import annotations
 
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from .analyzers import runtime_capabilities
-from .calibration import load_calibration
 from .config import Settings, load_settings
-from .engine import analyze
-from .security import AuditLogger, MetricsStore, RateLimiter, anonymize_identity, is_path_within_roots
+from .humanizer import HumanizeResult, humanize
+from .security import AuditLogger, MetricsStore, RateLimiter, anonymize_identity
 
 try:
     from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -23,18 +23,21 @@ except Exception as exc:  # pragma: no cover - only imported during runtime
     ) from exc
 
 
-class AnalyzeRequest(BaseModel):
-    input_path: Optional[str] = Field(default=None, description="Path to local asset")
-    text: Optional[str] = Field(default=None, description="Inline text to analyze")
-    modality: str = Field(default="auto")
-    identity_claim: Optional[str] = Field(default=None)
-    profile: str = Field(default="industry_low_fp")
+class HumanizeRequest(BaseModel):
+    text: str = Field(..., description="AI-generated text to humanize")
+    synonym_rate: float = Field(default=0.35, ge=0.0, le=1.0, description="Fraction of adjectives/adverbs to swap")
+    merge_rate: float = Field(default=0.25, ge=0.0, le=1.0, description="Probability of merging adjacent sentences")
+    seed: Optional[int] = Field(default=None, description="Optional random seed for reproducible output")
 
 
-class AnalyzeResponse(BaseModel):
+class HumanizeResponse(BaseModel):
     request_id: str
     processed_at: str
-    result: dict
+    humanized_text: str
+    original_word_count: int
+    humanized_word_count: int
+    markers_removed: int
+    sentences_merged: int
 
 
 def _utc_now() -> str:
@@ -53,7 +56,6 @@ def _client_seed(request: Request, x_api_key: Optional[str]) -> str:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or load_settings()
-    calibration = load_calibration(cfg.calibration_file)
     limiter = RateLimiter(cfg.rate_limit_per_minute, cfg.rate_limit_burst)
     metrics = MetricsStore()
     audit_logger = AuditLogger(path=cfg.audit_log_path, enabled=cfg.enable_audit_log)
@@ -64,7 +66,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.metrics = metrics
     app.state.limiter = limiter
     app.state.audit = audit_logger
-    app.state.calibration = calibration
 
     if cfg.enable_cors:
         app.add_middleware(
@@ -107,7 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=429,
                 detail="Rate limit exceeded",
-                headers={"Retry-After": str(max(1, int(retry_after)))}
+                headers={"Retry-After": str(max(1, int(retry_after)))},
             )
 
         return {
@@ -119,7 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def healthz() -> dict:
         return {
             "status": "ok",
-            "service": "aip",
+            "service": "ai-text-humanizer",
             "version": cfg.app_version,
             "started_at": started_at,
             "time_utc": _utc_now(),
@@ -129,17 +130,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def readyz() -> dict:
         caps = runtime_capabilities()
         degraded_reasons = []
-        if not caps.get("numpy") or not caps.get("pillow"):
-            degraded_reasons.append("image_forensics_degraded")
-        if not caps.get("ffprobe"):
-            degraded_reasons.append("video_probe_degraded")
-        if not caps.get("ffmpeg"):
-            degraded_reasons.append("video_frame_forensics_degraded")
+        if not caps.get("nltk"):
+            degraded_reasons.append("nltk_unavailable")
+        if not caps.get("wordnet"):
+            degraded_reasons.append("wordnet_data_missing")
+        if not caps.get("punkt"):
+            degraded_reasons.append("punkt_tokenizer_missing")
 
         status = "ready_degraded" if degraded_reasons else "ready"
         return {
             "status": status,
-            "service": "aip",
+            "service": "ai-text-humanizer",
             "version": cfg.app_version,
             "degraded_reasons": degraded_reasons,
             "runtime_capabilities": caps,
@@ -150,9 +151,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "runtime_capabilities": runtime_capabilities(),
             "notes": [
-                "No account-based third-party API required.",
-                "Missing optional integrations lower observability instead of hard failure.",
-                "Guardrails enabled: api-key, rate-limit, audit log, path restrictions.",
+                "All NLP processing is performed locally; no external API required.",
+                "Install NLTK data with: python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng",
+                "Missing NLTK data falls back to regex-based processing with reduced quality.",
             ],
         }
 
@@ -160,25 +161,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def policies(_: dict = Depends(_auth_and_limit)) -> dict:
         return {
             "max_text_chars": cfg.max_text_chars,
-            "max_file_size_mb": cfg.max_file_size_mb,
             "rate_limit_per_minute": cfg.rate_limit_per_minute,
             "rate_limit_burst": cfg.rate_limit_burst,
-            "allowed_input_roots": cfg.allowed_input_roots,
             "audit_log_enabled": cfg.enable_audit_log,
             "metrics_enabled": cfg.enable_metrics,
             "api_key_required": bool(cfg.api_key),
-            "calibration_file": cfg.calibration_file or None,
-            "calibration_loaded": bool(calibration),
-        }
-
-    @app.get("/calibration")
-    def calibration_info(_: dict = Depends(_auth_and_limit)) -> dict:
-        if not calibration:
-            return {"loaded": False}
-        return {
-            "loaded": True,
-            "profiles": sorted(list((calibration.get("profiles") or {}).keys())) if isinstance(calibration, dict) else [],
-            "default_threshold": calibration.get("default_threshold") if isinstance(calibration, dict) else None,
         }
 
     @app.get("/metrics")
@@ -190,83 +177,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "snapshot": metrics.snapshot(),
         }
 
-    @app.post("/analyze", response_model=AnalyzeResponse)
-    def analyze_endpoint(payload: AnalyzeRequest, request: Request, ctx: dict = Depends(_auth_and_limit)) -> AnalyzeResponse:
+    @app.post("/humanize", response_model=HumanizeResponse)
+    def humanize_endpoint(
+        payload: HumanizeRequest,
+        request: Request,
+        ctx: dict = Depends(_auth_and_limit),
+    ) -> HumanizeResponse:
         request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
         started = time.perf_counter()
         event = {
             "time_utc": _utc_now(),
             "request_id": request_id,
-            "endpoint": "/analyze",
+            "endpoint": "/humanize",
             "client_hash": ctx["client_hash"],
-            "profile": payload.profile,
-            "modality": payload.modality,
             "status_code": 200,
         }
 
         try:
-            if not payload.input_path and not payload.text:
-                raise HTTPException(status_code=400, detail="Either input_path or text must be provided")
-
-            if payload.text and len(payload.text) > cfg.max_text_chars:
+            if len(payload.text) > cfg.max_text_chars:
                 raise HTTPException(
                     status_code=413,
                     detail=f"Text exceeds max length ({cfg.max_text_chars} chars)",
                 )
 
-            if payload.input_path:
-                path = Path(payload.input_path).expanduser().resolve()
-                if not is_path_within_roots(path, cfg.allowed_input_roots):
-                    raise HTTPException(status_code=403, detail="input_path is outside allowed roots")
-                if not path.exists():
-                    raise HTTPException(status_code=404, detail="input_path not found")
-
-                max_size_bytes = cfg.max_file_size_mb * 1024 * 1024
-                size = path.stat().st_size
-                if size > max_size_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"input_path exceeds max file size ({cfg.max_file_size_mb} MB)",
-                    )
-
-            result = analyze(
-                input_path=payload.input_path,
+            result: HumanizeResult = humanize(
                 text=payload.text,
-                modality=payload.modality,
-                identity_claim=payload.identity_claim,
-                policy_profile=payload.profile,
-                calibration=calibration,
-            ).to_dict()
-
-            decision = str(result.get("risk", {}).get("decision", "unknown"))
-            if cfg.enable_metrics:
-                metrics.observe_decision(decision)
+                synonym_rate=payload.synonym_rate,
+                merge_rate=payload.merge_rate,
+                seed=payload.seed,
+            )
 
             event.update(
                 {
                     "status_code": 200,
-                    "decision": decision,
-                    "overall_risk": result.get("risk", {}).get("overall_risk"),
-                    "confidence": result.get("risk", {}).get("confidence"),
-                    "uncertainty": result.get("risk", {}).get("uncertainty"),
-                    "coverage": result.get("detection", {}).get("coverage"),
-                    "quality": result.get("detection", {}).get("quality"),
-                    "provenance_verified": result.get("provenance", {}).get("verified"),
+                    "original_word_count": result.original_word_count,
+                    "humanized_word_count": result.humanized_word_count,
+                    "markers_removed": result.markers_removed,
+                    "sentences_merged": result.sentences_merged,
                 }
             )
 
-            return AnalyzeResponse(
+            return HumanizeResponse(
                 request_id=request_id,
                 processed_at=_utc_now(),
-                result=result,
+                humanized_text=result.humanized_text,
+                original_word_count=result.original_word_count,
+                humanized_word_count=result.humanized_word_count,
+                markers_removed=result.markers_removed,
+                sentences_merged=result.sentences_merged,
             )
 
         except HTTPException as exc:
             event.update({"status_code": exc.status_code, "error": str(exc.detail)})
             raise
-        except FileNotFoundError:
-            event.update({"status_code": 404, "error": "input_path not found"})
-            raise HTTPException(status_code=404, detail="input_path not found")
         except Exception:
             event.update({"status_code": 500, "error": "internal_error"})
             raise HTTPException(status_code=500, detail="Internal server error")

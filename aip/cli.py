@@ -1,72 +1,63 @@
+"""Command-line interface for the AI Text Humanizer."""
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from .analyzers import runtime_capabilities
-from .calibration import load_calibration, save_calibration
 from .config import load_settings
-from .engine import analyze
-from .evaluation import build_calibration_bundle, evaluate_thresholds, run_dataset, write_json_report
-from .scorecard import build_readiness_scorecard, write_scorecard_files
+from .humanizer import humanize
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aip",
-        description="Authenticity Intelligence Platform",
+        description="AI Text Humanizer",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    analyze_cmd = sub.add_parser("analyze", help="Analyze text or media authenticity risk")
-    analyze_cmd.add_argument("--input", help="Path to image/audio/video/text file")
-    analyze_cmd.add_argument("--text", help="Raw text input to analyze")
-    analyze_cmd.add_argument(
-        "--modality",
-        default="auto",
-        choices=["auto", "text", "image", "audio", "video", "binary"],
-        help="Content modality override",
+    humanize_cmd = sub.add_parser("humanize", help="Rewrite AI-generated text to read as human-written")
+    humanize_cmd.add_argument("--text", required=True, help="Raw text to humanize")
+    humanize_cmd.add_argument(
+        "--synonym-rate",
+        type=float,
+        default=0.35,
+        metavar="RATE",
+        help="Fraction of adjectives/adverbs to swap via WordNet (0–1, default 0.35)",
     )
-    analyze_cmd.add_argument("--identity-claim", help="Claimed speaker/author identity", default=None)
-    analyze_cmd.add_argument(
-        "--profile",
-        default="industry_low_fp",
-        choices=["industry_low_fp", "balanced", "high_recall"],
-        help="Decision profile. industry_low_fp is strictest against false positives.",
+    humanize_cmd.add_argument(
+        "--merge-rate",
+        type=float,
+        default=0.25,
+        metavar="RATE",
+        help="Probability of merging two adjacent sentences (0–1, default 0.25)",
     )
-    analyze_cmd.add_argument("--calibration", default=None, help="Calibration JSON path")
-    analyze_cmd.add_argument("--output", help="Write JSON output to file", default=None)
-    analyze_cmd.add_argument("--pretty", action="store_true", help="Pretty-print output JSON")
+    humanize_cmd.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional random seed for reproducible output",
+    )
+    humanize_cmd.add_argument("--output", help="Write JSON output to file", default=None)
+    humanize_cmd.add_argument("--pretty", action="store_true", help="Pretty-print output JSON")
 
-    doctor_cmd = sub.add_parser("doctor", help="Show available local open-source integrations")
+    doctor_cmd = sub.add_parser("doctor", help="Show available NLP integrations")
     doctor_cmd.add_argument("--pretty", action="store_true", help="Pretty-print output JSON")
 
     preflight_cmd = sub.add_parser("preflight", help="Production readiness preflight checks")
     preflight_cmd.add_argument("--pretty", action="store_true", help="Pretty-print output JSON")
 
-    eval_cmd = sub.add_parser("evaluate", help="Run benchmark evaluation from labeled CSV")
-    eval_cmd.add_argument("--dataset", required=True, help="CSV with at least label + (input_path or text)")
-    eval_cmd.add_argument(
-        "--profile",
-        default="industry_low_fp",
-        choices=["industry_low_fp", "balanced", "high_recall"],
-        help="Decision profile",
-    )
-    eval_cmd.add_argument("--threshold", type=float, default=0.65, help="Input threshold for metric snapshot")
-    eval_cmd.add_argument("--target-fpr", type=float, default=0.03, help="FPR target for threshold recommendation")
-    eval_cmd.add_argument("--output", default="evaluation_report.json", help="Evaluation JSON output")
-    eval_cmd.add_argument("--scorecard-json", default="scorecard.json", help="Readiness scorecard JSON output")
-    eval_cmd.add_argument("--scorecard-md", default="scorecard.md", help="Readiness scorecard markdown output")
-    eval_cmd.add_argument("--calibration-output", default="calibration.json", help="Calibration JSON output")
-    eval_cmd.add_argument("--pretty", action="store_true", help="Pretty-print console output")
-
     serve_cmd = sub.add_parser("serve", help="Run FastAPI server")
     serve_cmd.add_argument("--host", default="0.0.0.0")
     serve_cmd.add_argument("--port", type=int, default=8000)
     serve_cmd.add_argument("--workers", type=int, default=1)
-    serve_cmd.add_argument("--log-level", default="info", choices=["critical", "error", "warning", "info", "debug"])
+    serve_cmd.add_argument(
+        "--log-level",
+        default="info",
+        choices=["critical", "error", "warning", "info", "debug"],
+    )
     serve_cmd.add_argument("--reload", action="store_true")
 
     return parser
@@ -76,25 +67,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "analyze":
-        if not args.input and args.text is None:
-            parser.error("analyze requires either --input or --text")
-
-        result = analyze(
-            input_path=args.input,
+    if args.command == "humanize":
+        result = humanize(
             text=args.text,
-            modality=args.modality,
-            identity_claim=args.identity_claim,
-            policy_profile=args.profile,
-            calibration=load_calibration(args.calibration),
+            synonym_rate=args.synonym_rate,
+            merge_rate=args.merge_rate,
+            seed=args.seed,
         )
-
-        json_output = json.dumps(result.to_dict(), indent=2 if args.pretty else None)
+        payload = {
+            "humanized_text": result.humanized_text,
+            "original_word_count": result.original_word_count,
+            "humanized_word_count": result.humanized_word_count,
+            "markers_removed": result.markers_removed,
+            "sentences_merged": result.sentences_merged,
+        }
+        json_output = json.dumps(payload, indent=2 if args.pretty else None)
 
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
                 f.write(json_output)
-            print(f"Wrote analysis to {args.output}")
+            print(f"Wrote humanized output to {args.output}")
         else:
             print(json_output)
 
@@ -102,9 +94,9 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "runtime_capabilities": runtime_capabilities(),
             "notes": [
-                "All integrations are local and optional.",
-                "No account-based APIs are required by this tool.",
-                "Missing components are auto-skipped with lower confidence coverage.",
+                "All NLP processing is local and requires no external accounts.",
+                "NLTK is used for POS tagging and WordNet synonym substitution.",
+                "Run: python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng",
             ],
         }
         print(json.dumps(payload, indent=2 if args.pretty else None))
@@ -129,28 +121,19 @@ def main(argv: list[str] | None = None) -> int:
                 "detail": f"rate_per_min={cfg.rate_limit_per_minute}, burst={cfg.rate_limit_burst}",
             },
             {
-                "name": "path_restrictions_configured",
-                "pass": len(cfg.allowed_input_roots) > 0,
-                "detail": f"allowed_input_roots={cfg.allowed_input_roots}",
+                "name": "nltk_available",
+                "pass": bool(caps.get("nltk")),
+                "detail": "Install NLTK: pip install nltk",
             },
             {
-                "name": "video_tooling_available",
-                "pass": bool(caps.get("ffprobe")) and bool(caps.get("ffmpeg")),
-                "detail": f"ffprobe={caps.get('ffprobe')}, ffmpeg={caps.get('ffmpeg')}",
+                "name": "wordnet_available",
+                "pass": bool(caps.get("wordnet")),
+                "detail": "Run: python -m nltk.downloader wordnet",
             },
             {
-                "name": "forensics_stack_available",
-                "pass": bool(caps.get("numpy")) and bool(caps.get("pillow")) and bool(caps.get("scipy_wav")),
-                "detail": f"numpy={caps.get('numpy')}, pillow={caps.get('pillow')}, scipy_wav={caps.get('scipy_wav')}",
-            },
-            {
-                "name": "calibration_configured_or_optional",
-                "pass": (not cfg.calibration_file) or Path(cfg.calibration_file).expanduser().exists(),
-                "detail": (
-                    f"calibration_file={cfg.calibration_file}"
-                    if cfg.calibration_file
-                    else "no calibration configured (recommended after benchmark tuning)"
-                ),
+                "name": "punkt_available",
+                "pass": bool(caps.get("punkt")),
+                "detail": "Run: python -m nltk.downloader punkt_tab",
             },
         ]
 
@@ -160,51 +143,23 @@ def main(argv: list[str] | None = None) -> int:
             "summary": {
                 "passed": passed,
                 "total": total,
-                "status": "ready" if passed == total else "needs_hardening",
+                "status": "ready" if passed == total else "needs_setup",
             },
             "checks": checks,
             "notes": [
-                "Market launch should wait until all critical checks pass and benchmark scorecard gates pass.",
+                "All NLP dependencies must pass for full humanization quality.",
+                "Fallback regex processing is available when NLTK data is missing.",
             ],
         }
         print(json.dumps(payload, indent=2 if args.pretty else None))
-
-    elif args.command == "evaluate":
-        raw = run_dataset(dataset_csv=args.dataset, profile=args.profile)
-        report = evaluate_thresholds(
-            raw_results=raw,
-            threshold=args.threshold,
-            target_fpr=args.target_fpr,
-        )
-        write_json_report(report, args.output)
-        calibration_bundle = build_calibration_bundle(report)
-        calibration_path = save_calibration(calibration_bundle, args.calibration_output)
-
-        scorecard = build_readiness_scorecard(report)
-        scorecard_json_path, scorecard_md_path = write_scorecard_files(
-            report,
-            scorecard,
-            json_path=args.scorecard_json,
-            markdown_path=args.scorecard_md,
-        )
-
-        console = {
-            "evaluation_report": args.output,
-            "scorecard_json": scorecard_json_path,
-            "scorecard_md": scorecard_md_path,
-            "calibration_json": calibration_path,
-            "readiness_score": scorecard.get("readiness_score"),
-            "readiness_band": scorecard.get("readiness_band"),
-            "blocked_by": scorecard.get("blocked_by", []),
-            "recommended_threshold": report.get("recommended_threshold", {}),
-        }
-        print(json.dumps(console, indent=2 if args.pretty else None))
 
     elif args.command == "serve":
         try:
             import uvicorn
         except Exception as exc:
-            raise RuntimeError("uvicorn is not installed. Install with: pip install -e '.[api]'") from exc
+            raise RuntimeError(
+                "uvicorn is not installed. Install with: pip install -e '.[api]'"
+            ) from exc
 
         uvicorn.run(
             "aip.api:app",

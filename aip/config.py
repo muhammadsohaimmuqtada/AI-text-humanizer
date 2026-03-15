@@ -59,8 +59,8 @@ def load_settings() -> Settings:
     default_roots = ["/tmp"]
 
     return Settings(
-        app_name="Authenticity Intelligence Platform API",
-        app_version="0.3.0",
+        app_name="AI Text Humanizer API",
+        app_version="1.0.0",
         api_key=os.getenv("AIP_API_KEY", "").strip(),
         max_text_chars=_env_int("AIP_MAX_TEXT_CHARS", 25000, min_value=128),
         max_file_size_mb=_env_int("AIP_MAX_FILE_SIZE_MB", 300, min_value=1),
