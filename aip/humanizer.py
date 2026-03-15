@@ -147,7 +147,7 @@ _HOMOGLYPH_MAP: Dict[str, str] = {
     "B": "\u0412",  # Latin 'B' (U+0042) → Cyrillic 'В' (U+0412)
     "C": "\u0421",  # Latin 'C' (U+0043) → Cyrillic 'С' (U+0421)
     "E": "\u0415",  # Latin 'E' (U+0045) → Cyrillic 'Е' (U+0415)
-    "H": "\u041D",  # Latin 'H' (U+0048) → Cyrillic 'Н' (U+041D)
+    "H": "\u041D",  # Latin 'H' (U+0048) → Cyrillic 'Н' (U+041D, CYRILLIC CAPITAL LETTER EN) – visually identical in common fonts
     "K": "\u041A",  # Latin 'K' (U+004B) → Cyrillic 'К' (U+041A)
     "M": "\u041C",  # Latin 'M' (U+004D) → Cyrillic 'М' (U+041C)
     "O": "\u041E",  # Latin 'O' (U+004F) → Cyrillic 'О' (U+041E)

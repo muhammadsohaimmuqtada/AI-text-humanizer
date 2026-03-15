@@ -389,9 +389,13 @@ class TestAdversarialMode(unittest.TestCase):
         """Removing ZWSPs from adversarial output should yield normal-looking text."""
         text = "Technology is transforming communication and education worldwide."
         result = humanize(text, seed=5, adversarial_mode=True, adversarial_zws_rate=1.0)
+        # ZWSPs must have been injected (the word "Technology" is >6 chars)
+        self.assertIn(_ZWSP, result.humanized_text)
+        # After stripping ZWSP the text should contain the core vocabulary
         stripped = result.humanized_text.replace(_ZWSP, "")
-        # Basic readability: must contain at least some original words
         self.assertIn("transform", stripped.lower())
+        # The stripped output should be similar in length to the input (no dramatic truncation)
+        self.assertGreater(len(stripped), len(text) * 0.7)
 
     def test_adversarial_mode_homoglyph_swaps_present(self) -> None:
         """With rate=1.0, every eligible Latin character must be replaced."""
