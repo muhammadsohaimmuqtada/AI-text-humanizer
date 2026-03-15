@@ -43,6 +43,7 @@ test = [
 
 [project.scripts]
 aip = "aip.cli:main"
+aip-gui = "aip.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
