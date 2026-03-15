@@ -60,10 +60,9 @@ class ApiFactoryTests(unittest.TestCase):
         paths = {route.path for route in app.routes}
         self.assertIn("/healthz", paths)
         self.assertIn("/readyz", paths)
-        self.assertIn("/analyze", paths)
+        self.assertIn("/humanize", paths)
         self.assertIn("/metrics", paths)
         self.assertIn("/policies", paths)
-        self.assertIn("/calibration", paths)
 
     def test_load_settings_env_override(self) -> None:
         old = os.environ.get("AIP_MAX_TEXT_CHARS")

@@ -1,15 +1,11 @@
-"""Authenticity Intelligence Platform package."""
+"""AI Text Humanizer package."""
 
 __all__ = [
+    "humanizer",
     "engine",
     "analyzers",
-    "provenance",
-    "risk",
     "types",
-    "evaluation",
-    "scorecard",
     "api",
     "config",
     "security",
-    "calibration",
 ]
