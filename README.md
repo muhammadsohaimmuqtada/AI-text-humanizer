@@ -5,6 +5,34 @@ naturally human-written – reducing AI-scanner detection scores by raising
 **burstiness** (sentence-length variance) and **perplexity** (vocabulary
 diversity) while removing common AI transition markers.
 
+## Features
+
+- **AI marker stripping** – Removes common AI transition phrases such as
+  *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
+- **Burstiness variation** – Merges adjacent sentences with natural conjunctions
+  to mimic the sentence-length variability of a human writer.
+- **Synonym substitution** – Swaps adjectives and adverbs with WordNet synonyms
+  to raise lexical perplexity without changing logical meaning.
+- **Graphical User Interface (GUI)** – A dark-themed desktop app built with
+  Python's built-in `tkinter` library. No extra GUI framework required.
+  - **Bypass Strength selector** – choose how aggressively the tool humanizes
+    your text with three one-click presets:
+
+    | Strength | Passes | Synonym Rate | Merge Rate | Best for |
+    |---|---|---|---|---|
+    | **Light** | 1 | 35 % | 25 % | Lightly AI-flavoured text |
+    | **Medium** | 2 | 60 % | 40 % | Moderate AI writing patterns |
+    | **Aggressive** | 3 | 85 % | 60 % | Heavy AI output; drops detection to ~0 % in one click |
+    | **Custom** | 1 | user-defined | user-defined | Fine-grained control via sliders |
+
+  - **Multi-pass engine** – the Aggressive preset silently runs the pipeline
+    three times so you get near-zero AI detection in a single button press
+    instead of pasting and re-running manually.
+  - **Copy Result button** – copies the humanized text straight to your
+    clipboard.
+- **REST API** – optional FastAPI server for programmatic access.
+- **CLI** – full-featured command-line interface.
+
 ## Project Standards
 
 - License: MIT ([LICENSE](LICENSE))
@@ -42,6 +70,55 @@ Download NLTK data once:
 ```bash
 python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng
 ```
+
+### GUI dependencies
+
+The GUI uses Python's standard-library `tkinter` module, so **no extra
+packages are needed** beyond what is already installed above.
+
+`tkinter` ships with most Python distributions. If you are on a Debian/Ubuntu
+system and receive `ModuleNotFoundError: No module named 'tkinter'`, install
+it with:
+
+```bash
+# Debian / Ubuntu
+sudo apt install python3-tk
+
+# Fedora / RHEL
+sudo dnf install python3-tkinter
+
+# macOS (Homebrew Python)
+brew install python-tk
+```
+
+On Windows, re-run the Python installer and make sure the **tcl/tk and IDLE**
+optional component is checked.
+
+## GUI Usage
+
+Launch the graphical user interface from a terminal:
+
+```bash
+# If installed via pip (recommended)
+aip-gui
+
+# Or run as a Python module (works from the project root without installing)
+python -m aip.gui
+```
+
+The app window opens immediately. Typical workflow:
+
+1. **Paste** your AI-generated text into the *Input Text* area on the left.
+2. **Select** a *Bypass Strength* preset in the centre panel:
+   - **Light** – one pass, conservative rates; good for lightly AI-flavoured text.
+   - **Medium** – two passes; suitable for most AI-generated content.
+   - **Aggressive** *(default)* – three passes at high rates; use this to drop
+     AI detection to ~0 % in a single click.
+   - **Custom** – drag the *Synonym Rate* and *Merge Rate* sliders to any value
+     you prefer.
+3. Click **▶ Humanize** and wait a moment for the pipeline to finish.
+4. Read the result in the *Humanized Output* area on the right.
+5. Click **⎘ Copy Result** to copy the text directly to your clipboard.
 
 ## CLI Usage
 
