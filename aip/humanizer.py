@@ -1,14 +1,22 @@
 """AI Text Humanizer – core NLP transformation pipeline.
 
-The pipeline applies four transformations in order:
+The pipeline applies eight transformations in order:
 
 1. **Marker stripping** – removes common AI transition phrases
    (e.g. "In conclusion,", "Furthermore,", "As an AI language model").
 2. **Sentence tokenisation** – splits the cleaned text into individual sentences.
-3. **Burstiness variation** – randomly merges adjacent sentences so that sentence
-   lengths vary, a key trait of human writing.
-4. **Synonym substitution** – replaces a fraction of adjectives and adverbs with
-   WordNet synonyms to raise lexical perplexity without changing meaning.
+3. **Contraction insertion** – converts formal expansions ("do not" → "don't",
+   "it is" → "it's") to match natural human writing style.
+4. **Clause reordering** – moves prepositional/adverbial phrases to vary
+   subject-verb-object monotony.
+5. **Sentence splitting** – breaks long compound sentences at coordinating
+   conjunctions to create short punchy sentences.
+6. **Burstiness variation** – randomly merges adjacent sentences so that
+   sentence lengths vary, a key trait of human writing.
+7. **Discourse filler insertion** – prepends natural human phrases like
+   "Honestly,", "Look,", "The thing is," to some sentences.
+8. **Synonym substitution** – replaces a fraction of adjectives and adverbs
+   with WordNet synonyms to raise lexical perplexity without changing meaning.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ except ImportError:  # pragma: no cover - optional dependency
 # ---------------------------------------------------------------------------
 
 _AI_MARKERS: List[str] = [
+    # Classic AI conclusions / transitions
     "in conclusion,",
     "in conclusion",
     "it is important to note that",
@@ -39,12 +48,16 @@ _AI_MARKERS: List[str] = [
     "it is crucial to understand that",
     "it should be noted that",
     "it is essential to note that",
+    "it is worth mentioning that",
+    "it is important to understand that",
+    "it is imperative to note that",
     "as an ai language model,",
     "as an ai language model",
     "as an ai,",
     "as an ai",
     "i cannot browse",
     "i do not have real-time",
+    # Transition / connector phrases
     "additionally,",
     "furthermore,",
     "moreover,",
@@ -62,41 +75,225 @@ _AI_MARKERS: List[str] = [
     "it goes without saying that",
     "to put it simply,",
     "to put it simply",
+    # Modern GPT-era markers
+    "it's worth noting that",
+    "it's important to note that",
+    "it's crucial to note that",
+    "it is also worth noting that",
+    "it is also important to note that",
+    "in today's rapidly evolving",
+    "in today's fast-paced",
+    "in today's digital age,",
+    "in today's digital age",
+    "in the ever-evolving landscape of",
+    "in this day and age,",
+    "in this day and age",
+    "the importance of this cannot be overstated",
+    "this cannot be overstated",
+    "this underscores the importance of",
+    "plays a crucial role in",
+    "plays a pivotal role in",
+    "plays a vital role in",
+    "serves as a testament to",
+    "it's essential to recognize that",
+    "delves into",
+    "delve into",
+    "it's also worth mentioning that",
+    "on the other hand,",
+    "having said that,",
+    "that being said,",
+    "with that being said,",
+    "notwithstanding,",
+    "henceforth,",
+    "consequently,",
+    "in light of this,",
+    "in light of the above,",
+    "as a result of this,",
+    "it can be concluded that",
+    "to conclude,",
+    "to sum up,",
+    "all things considered,",
+    "taking everything into account,",
+    "in essence,",
+    "by and large,",
+    "for the most part,",
+    "on a broader note,",
+    "from a broader perspective,",
+    "in a nutshell,",
+    "overall,",
+]
+
+# ---------------------------------------------------------------------------
+# Contraction maps (formal → contracted)
+# ---------------------------------------------------------------------------
+
+_CONTRACTIONS: List[Tuple[str, str]] = [
+    ("do not", "don't"),
+    ("does not", "doesn't"),
+    ("did not", "didn't"),
+    ("is not", "isn't"),
+    ("are not", "aren't"),
+    ("was not", "wasn't"),
+    ("were not", "weren't"),
+    ("will not", "won't"),
+    ("would not", "wouldn't"),
+    ("could not", "couldn't"),
+    ("should not", "shouldn't"),
+    ("has not", "hasn't"),
+    ("have not", "haven't"),
+    ("had not", "hadn't"),
+    ("can not", "can't"),
+    ("cannot", "can't"),
+    ("it is", "it's"),
+    ("it has", "it's"),
+    ("that is", "that's"),
+    ("there is", "there's"),
+    ("there are", "there're"),
+    ("they are", "they're"),
+    ("they have", "they've"),
+    ("they will", "they'll"),
+    ("they would", "they'd"),
+    ("we are", "we're"),
+    ("we have", "we've"),
+    ("we will", "we'll"),
+    ("we would", "we'd"),
+    ("you are", "you're"),
+    ("you have", "you've"),
+    ("you will", "you'll"),
+    ("you would", "you'd"),
+    ("I am", "I'm"),
+    ("I have", "I've"),
+    ("I will", "I'll"),
+    ("I would", "I'd"),
+    ("he is", "he's"),
+    ("he has", "he's"),
+    ("he will", "he'll"),
+    ("he would", "he'd"),
+    ("she is", "she's"),
+    ("she has", "she's"),
+    ("she will", "she'll"),
+    ("she would", "she'd"),
+    ("who is", "who's"),
+    ("who has", "who's"),
+    ("what is", "what's"),
+    ("what has", "what's"),
+    ("let us", "let's"),
+]
+
+# ---------------------------------------------------------------------------
+# Discourse fillers — natural human interjections
+# ---------------------------------------------------------------------------
+
+_DISCOURSE_FILLERS: List[str] = [
+    "Honestly,",
+    "Look,",
+    "The thing is,",
+    "Here's the deal —",
+    "Basically,",
+    "Truth is,",
+    "I mean,",
+    "Sure,",
+    "Right,",
+    "So yeah,",
+    "In practice,",
+    "Realistically,",
+    "At the end of the day,",
+    "For what it's worth,",
+    "Point being,",
+    "To be fair,",
+    "If you think about it,",
+    "No doubt,",
+    "Funny enough,",
+    "Interestingly,",
+    "Naturally,",
+    "And honestly,",
+    "As it turns out,",
+    "The reality is,",
+    "Plain and simple,",
 ]
 
 # POS tags eligible for synonym substitution (adjectives and adverbs only)
 _SWAP_TAGS = {"JJ", "JJR", "JJS", "RB", "RBR", "RBS"}
 
-# Maximum safe synonym substitution rate. Exceeding this value causes too many
-# bizarre replacements (WordNet secondary senses) that destroy readability.
-_MAX_SYNONYM_RATE: float = 0.40
-
 # Words that must never be swapped – they carry precise contextual meaning that
-# WordNet synonyms routinely mishandle (e.g. "same" → "Saami", "cloud" → "corrupt").
+# WordNet synonyms routinely mishandle.
 _SYNONYM_BLACKLIST: frozenset = frozenset(
     {
+        # Function words / adverbs that must stay exact
+        "not", "very", "also", "just", "only", "even", "still", "never",
+        "always", "often", "much", "more", "most", "less", "least",
+        "well", "quite", "rather", "really", "too", "so", "now", "then",
+        "here", "there", "where", "when", "how", "why", "yet", "ago",
+        # Adjectives that WordNet maps to absurd synonyms
         "same", "social", "cloud", "public", "human", "local", "global",
         "digital", "data", "privacy", "ethical", "real", "true", "false",
-        "good", "bad", "new", "old", "high", "low", "large", "small",
-        "free", "open", "fast", "slow", "full", "empty", "clean", "clear",
-        "common", "general", "special", "natural", "physical", "mental",
-        "personal", "political", "economic", "cultural", "legal",
-        "medical", "scientific", "technical", "modern", "current", "recent",
-        "major", "minor", "main", "key", "core", "basic", "simple", "complex",
-        "direct", "final", "total", "specific", "standard", "advanced",
-        "primary", "secondary", "early", "late", "long", "short",
-        "deep", "wide", "broad", "narrow", "light", "dark", "hard", "soft",
-        "strong", "weak", "rich", "poor", "safe", "secure", "critical",
+        "artificial", "recent", "significant", "essential", "substantial",
+        "particular", "continued", "important", "potential", "rapid",
+        "various", "certain", "entire", "overall", "likely", "unlikely",
+        "available", "possible", "impossible", "necessary", "relevant",
+        "effective", "efficient", "successful", "traditional", "fundamental",
+        "critical", "crucial", "vital", "key", "major", "minor",
+        "daily", "annual", "initial", "final", "total", "original",
+        "previous", "current", "future", "present", "past", "next",
+        "many", "several", "numerous", "few", "other", "such",
+        "able", "unable", "likely", "unlikely", "further", "additional",
     }
 )
 
-# Conjunctions used when merging two adjacent short sentences
+# Conjunctions used when merging two adjacent short sentences (expanded)
 _MERGE_CONJUNCTIONS = [
     " and ",
     " while ",
     ", meaning ",
     " — ",
     ", which ",
+    ", and ",
+    "; ",
+    " but ",
+    " yet ",
+    ", so ",
+    " — and ",
+    ", plus ",
+    " (and ",
+    ", essentially ",
+    " — basically ",
+    ", right? And ",
+]
+
+# Coordinating conjunctions at which long sentences can be split
+_SPLIT_CONJUNCTIONS = [
+    ", and ",
+    ", but ",
+    ", or ",
+    ", yet ",
+    ", so ",
+    "; ",
+    " because ",
+    " although ",
+    " however ",
+    ", however,",
+    " whereas ",
+    " while ",
+]
+
+# Prepositional / adverbial openers that can be moved around
+_MOVABLE_CLAUSE_PATTERNS = [
+    # "In [year/time], ..." → move to end
+    re.compile(r"^(In \d{4},?\s+)(.+)$", re.IGNORECASE),
+    # "During the [noun], ..." → move to end
+    re.compile(r"^(During the \w[\w\s]{0,30},?\s+)(.+)$", re.IGNORECASE),
+    # "Over the past [X], ..." → move to end
+    re.compile(r"^(Over the (?:past|last|next) [\w\s]{1,20},?\s+)(.+)$", re.IGNORECASE),
+    # "According to [X], ..." → move to end
+    re.compile(r"^(According to [\w\s]{1,40},?\s+)(.+)$", re.IGNORECASE),
+    # "As a result, ..."
+    re.compile(r"^(As a result,?\s+)(.+)$", re.IGNORECASE),
+    # "For example, ..."
+    re.compile(r"^(For (?:example|instance),?\s+)(.+)$", re.IGNORECASE),
+    # "In particular, ..."
+    re.compile(r"^(In particular,?\s+)(.+)$", re.IGNORECASE),
+    # "On the other hand, ..."
+    re.compile(r"^(On the other hand,?\s+)(.+)$", re.IGNORECASE),
 ]
 
 
@@ -197,7 +394,183 @@ def _tokenize_sentences(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Step 3 – Burstiness variation (sentence merging)
+# Step 3 – Contraction insertion
+# ---------------------------------------------------------------------------
+
+
+def insert_contractions(
+    text: str,
+    rate: float = 0.65,
+    rng: Optional[random.Random] = None,
+) -> str:
+    """Convert formal expansions to contractions probabilistically.
+
+    E.g. ``"do not"`` → ``"don't"``, ``"it is"`` → ``"it's"``.
+    Contractions make text sound significantly more human.
+
+    Args:
+        text: Input text.
+        rate: Probability (0–1) of contracting each match. Default 0.65.
+        rng: Optional seeded RNG for reproducibility.
+
+    Returns:
+        Text with formal phrases probabilistically contracted.
+    """
+    if rate <= 0:
+        return text
+
+    _rng = rng or random
+
+    result = text
+    # Process longer patterns first to avoid partial match issues
+    for formal, contracted in sorted(_CONTRACTIONS, key=lambda x: len(x[0]), reverse=True):
+        # Build a case-insensitive pattern with word boundaries
+        pattern = re.compile(r"\b" + re.escape(formal) + r"\b", re.IGNORECASE)
+
+        def _replacer(match: re.Match) -> str:
+            if _rng.random() < rate:
+                original = match.group(0)
+                # Preserve capitalisation of the first letter
+                if original[0].isupper():
+                    return contracted[0].upper() + contracted[1:]
+                return contracted
+            return match.group(0)
+
+        result = pattern.sub(_replacer, result)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Step 4 – Clause reordering
+# ---------------------------------------------------------------------------
+
+
+def reorder_clauses(
+    sentences: List[str],
+    rate: float = 0.20,
+    rng: Optional[random.Random] = None,
+) -> List[str]:
+    """Move leading prepositional/adverbial phrases to end of sentence.
+
+    AI text almost always starts with the main clause. Humans frequently
+    put qualifiers at the end. This transform moves opening clauses
+    (e.g. "In 2024, X happened" → "X happened in 2024") to break the
+    monotonous AI structure.
+
+    Args:
+        sentences: List of individual sentences.
+        rate: Probability of reordering each eligible sentence.
+        rng: Optional seeded RNG.
+
+    Returns:
+        List of sentences with some clauses reordered.
+    """
+    if rate <= 0:
+        return list(sentences)
+
+    _rng = rng or random
+    result = []
+
+    for sent in sentences:
+        if _rng.random() >= rate:
+            result.append(sent)
+            continue
+
+        reordered = False
+        for pattern in _MOVABLE_CLAUSE_PATTERNS:
+            m = pattern.match(sent.strip())
+            if m:
+                clause = m.group(1).strip().rstrip(",")
+                remainder = m.group(2).strip()
+                # Capitalise remainder, lowercase the moved clause
+                if remainder:
+                    new_sent = remainder.rstrip(".!?") + ", " + clause.lower() + "."
+                    # Ensure first letter is capitalised
+                    new_sent = new_sent[0].upper() + new_sent[1:]
+                    result.append(new_sent)
+                    reordered = True
+                    break
+
+        if not reordered:
+            result.append(sent)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Step 5 – Sentence splitting
+# ---------------------------------------------------------------------------
+
+
+def split_long_sentences(
+    sentences: List[str],
+    rate: float = 0.30,
+    min_words: int = 18,
+    rng: Optional[random.Random] = None,
+) -> List[str]:
+    """Break long compound sentences into shorter ones.
+
+    AI detectors look for uniformly medium-length sentences. Splitting some
+    long sentences creates the short, punchy fragments that characterise
+    human writing.
+
+    Args:
+        sentences: List of sentences to process.
+        rate: Probability of splitting each eligible sentence.
+        min_words: Minimum word count for a sentence to be eligible.
+        rng: Optional seeded RNG.
+
+    Returns:
+        List of sentences, potentially longer than input due to splits.
+    """
+    if rate <= 0:
+        return list(sentences)
+
+    _rng = rng or random
+    result: List[str] = []
+
+    for sent in sentences:
+        word_count = len(sent.split())
+        if word_count < min_words or _rng.random() >= rate:
+            result.append(sent)
+            continue
+
+        # Try to split at a conjunction
+        split_done = False
+        # Shuffle conjunction order for variety
+        conjs = list(_SPLIT_CONJUNCTIONS)
+        _rng.shuffle(conjs)
+        for conj in conjs:
+            idx = sent.lower().find(conj.lower())
+            if idx > 0:
+                left = sent[:idx].strip()
+                right_start = idx + len(conj)
+                right = sent[right_start:].strip()
+
+                # Only split if both halves are substantial
+                if len(left.split()) >= 5 and len(right.split()) >= 4:
+                    # Ensure left ends with punctuation
+                    if not left[-1] in ".!?":
+                        left = left.rstrip(",;") + "."
+                    # Capitalise right side
+                    if right:
+                        right = right[0].upper() + right[1:]
+                        if not right[-1] in ".!?":
+                            right = right.rstrip(",;") + "."
+                    result.append(left)
+                    result.append(right)
+                    split_done = True
+                    break
+
+        if not split_done:
+            result.append(sent)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Step 6 – Burstiness variation (sentence merging) – enhanced
 # ---------------------------------------------------------------------------
 
 
@@ -251,47 +624,109 @@ def vary_sentence_lengths(
 
 
 # ---------------------------------------------------------------------------
-# Step 4 – Synonym substitution (perplexity raising)
+# Step 7 – Discourse filler insertion
+# ---------------------------------------------------------------------------
+
+
+def insert_discourse_fillers(
+    sentences: List[str],
+    rate: float = 0.08,
+    rng: Optional[random.Random] = None,
+) -> List[str]:
+    """Prepend natural human discourse fillers to some sentences.
+
+    Humans frequently start sentences with "Honestly,", "Look,", "I mean,"
+    etc. AI text almost never does. Adding these sparingly makes text
+    sound significantly more natural.
+
+    Args:
+        sentences: List of sentences.
+        rate: Probability of adding a filler to each sentence. Keep low
+            (0.05–0.15) for realistic results.
+        rng: Optional seeded RNG.
+
+    Returns:
+        List of sentences with some fillers prepended.
+    """
+    if rate <= 0 or not sentences:
+        return list(sentences)
+
+    _rng = rng or random
+    result: List[str] = []
+    used_fillers: set = set()
+
+    for i, sent in enumerate(sentences):
+        # Never add filler to the very first sentence or very short sentences
+        if i == 0 or len(sent.split()) < 4 or _rng.random() >= rate:
+            result.append(sent)
+            continue
+
+        # Pick a filler we haven't used yet (avoid repetition)
+        available = [f for f in _DISCOURSE_FILLERS if f not in used_fillers]
+        if not available:
+            available = list(_DISCOURSE_FILLERS)
+            used_fillers.clear()
+
+        filler = _rng.choice(available)
+        used_fillers.add(filler)
+
+        # Lowercase the original sentence start and prepend filler
+        body = sent.lstrip()
+        if body and body[0].isupper():
+            body = body[0].lower() + body[1:]
+
+        result.append(f"{filler} {body}")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Step 8 – Synonym substitution (perplexity raising) – improved
 # ---------------------------------------------------------------------------
 
 
 def _get_synonym(word: str, rng: Optional[random.Random] = None) -> Optional[str]:
     """Return a single WordNet synonym for *word*, or ``None`` if unavailable.
 
-    Only adjectives (JJ*) and adverbs (RB*) are passed in from the caller, so
-    the synonym lookup is safe with respect to preserving logical meaning.
-
-    Synonyms are drawn exclusively from the **first** (most common) synset so
-    that obscure secondary senses (e.g. "cloud" → "corrupt", "same" → "Saami")
-    are never chosen.  Words in ``_SYNONYM_BLACKLIST`` are never swapped.
+    Synonyms are drawn from the **first two** synsets (most common senses)
+    to increase vocabulary diversity while staying safe. Words in
+    ``_SYNONYM_BLACKLIST`` are never swapped. Single-character words and
+    very short words (< 3 chars) are also skipped.
     """
     if not _NLTK_AVAILABLE:
         return None
 
-    if word.lower() in _SYNONYM_BLACKLIST:
+    lower = word.lower()
+    if lower in _SYNONYM_BLACKLIST:
+        return None
+
+    if len(word) < 3:
         return None
 
     synsets = wordnet.synsets(word)
     if not synsets:
         return None
 
-    # Use only the first (most frequent) synset to avoid bizarre secondary
-    # definitions that destroy semantic meaning.  WordNet orders synsets from
-    # most to least frequent based on corpus analysis (SemCor), so synsets[0]
-    # represents the predominant, everyday sense of the word.
-    first_synset = synsets[0]
+    # Use up to the first 2 synsets (most frequent senses) to widen the pool
+    # while avoiding truly obscure meanings
     synonyms: set = set()
-    for lemma in first_synset.lemmas():
-        name = lemma.name()
-        if name.lower() != word.lower() and "_" not in name and name.isalpha():
-            synonyms.add(name)
+    for synset in synsets[:2]:
+        for lemma in synset.lemmas():
+            name = lemma.name()
+            if (
+                name.lower() != lower
+                and "_" not in name
+                and name.isalpha()
+                and len(name) >= 3
+            ):
+                synonyms.add(name)
 
     if not synonyms:
         return None
 
     # Prefer synonyms that don't share the same 3-character stem as the
     # original word, to maximise vocabulary diversity.
-    stem_prefix = word.lower()[:min(len(word), 3)]
+    stem_prefix = lower[:min(len(word), 3)]
     candidates = [s for s in synonyms if not s.lower().startswith(stem_prefix)]
     pool = candidates if candidates else list(synonyms)
     _rng = rng or random
@@ -309,14 +744,11 @@ def substitute_synonyms(
     verbs, and named entities – which carry core logical meaning – are never
     modified.
 
-    ``swap_rate`` is silently clamped to ``_MAX_SYNONYM_RATE`` (currently
-    ``0.40``) so that callers cannot accidentally pass rates that produce
-    incoherent output by triggering obscure WordNet secondary senses.
-
     Args:
         text: Input sentence or paragraph.
-        swap_rate: Fraction of eligible words to swap (0–1). Values above
-            ``_MAX_SYNONYM_RATE`` are clamped to that maximum.
+        swap_rate: Fraction of eligible words to swap (0–1). No hard cap —
+            quality is controlled per-word by the blacklist and synset
+            filtering.
         rng: Optional seeded :class:`random.Random` for reproducible output.
 
     Returns:
@@ -325,9 +757,6 @@ def substitute_synonyms(
     """
     if not _ensure_nltk_data():
         return text
-
-    # Clamp to the safe maximum to prevent garbling from high substitution rates
-    swap_rate = min(swap_rate, _MAX_SYNONYM_RATE)
 
     _rng = rng or random
 
@@ -339,7 +768,7 @@ def substitute_synonyms(
 
     result_words: List[str] = []
     for word, tag in tags:
-        if tag in _SWAP_TAGS and word.isalpha() and len(word) > 0 and _rng.random() < swap_rate:
+        if tag in _SWAP_TAGS and word.isalpha() and len(word) >= 3 and _rng.random() < swap_rate:
             synonym = _get_synonym(word, rng=_rng)
             if synonym:
                 if word[0].isupper():
@@ -352,6 +781,12 @@ def substitute_synonyms(
     reconstructed = " ".join(result_words)
     # Fix spaces before punctuation introduced by word_tokenize
     reconstructed = re.sub(r"\s+([?.!,;:'\"])", r"\1", reconstructed)
+    # Fix NLTK tokenizer splitting contractions (e.g. "ca n't" → "can't")
+    reconstructed = re.sub(r"\b(ca)\s+(n't)", r"\1\2", reconstructed)
+    reconstructed = re.sub(r"\b(wo)\s+(n't)", r"\1\2", reconstructed)
+    reconstructed = re.sub(r"\b(sha)\s+(n't)", r"\1\2", reconstructed)
+    reconstructed = re.sub(r"(\w)\s+('(?:s|re|ve|ll|d|t|m))\b", r"\1\2", reconstructed)
+    reconstructed = re.sub(r"\b(n)\s+('t)\b", r"\1\2", reconstructed)
     return reconstructed
 
 
@@ -379,18 +814,24 @@ def humanize(
     text: str,
     synonym_rate: float = 0.35,
     merge_rate: float = 0.25,
+    contraction_rate: float = 0.65,
+    clause_reorder_rate: float = 0.20,
+    split_rate: float = 0.30,
+    filler_rate: float = 0.08,
     seed: Optional[int] = None,
 ) -> HumanizeResult:
     """Transform AI-generated text to read as more human-written.
 
-    The pipeline applies four transformations in sequence:
+    The pipeline applies eight transformations in sequence:
 
     1. **Marker stripping** – removes common AI transition phrases.
     2. **Sentence tokenisation** – splits the cleaned text into sentences.
-    3. **Burstiness variation** – randomly merges adjacent sentences so that
-       sentence lengths vary (a key human-writing trait).
-    4. **Synonym substitution** – replaces a fraction of adjectives/adverbs
-       with WordNet synonyms to raise lexical perplexity.
+    3. **Contraction insertion** – converts formal expansions to contractions.
+    4. **Clause reordering** – varies sentence structure by moving clauses.
+    5. **Sentence splitting** – breaks long compound sentences.
+    6. **Burstiness variation** – randomly merges adjacent sentences.
+    7. **Discourse fillers** – inserts natural human interjections.
+    8. **Synonym substitution** – replaces adjectives/adverbs with synonyms.
 
     Args:
         text: The input text to humanize (AI-generated or otherwise).
@@ -398,6 +839,14 @@ def humanize(
             with synonyms (0–1). Default is 0.35.
         merge_rate: Probability of merging two consecutive sentences (0–1).
             Default is 0.25.
+        contraction_rate: Probability of contracting formal phrases (0–1).
+            Default is 0.65.
+        clause_reorder_rate: Probability of reordering clauses in eligible
+            sentences (0–1). Default is 0.20.
+        split_rate: Probability of splitting long compound sentences (0–1).
+            Default is 0.30.
+        filler_rate: Probability of inserting discourse fillers (0–1).
+            Default is 0.08.
         seed: Optional integer seed for reproducible output across runs.
 
     Returns:
@@ -444,10 +893,29 @@ def humanize(
             sentences_merged=0,
         )
 
-    # Step 3 – vary sentence lengths (burstiness)
-    varied, sentences_merged = vary_sentence_lengths(sentences, merge_rate=merge_rate, rng=rng)
+    # Step 3 – insert contractions (applied to full text, then re-tokenise)
+    contracted_text = insert_contractions(
+        " ".join(sentences), rate=contraction_rate, rng=rng
+    )
+    sentences = _tokenize_sentences(contracted_text)
+    if not sentences:
+        sentences = [contracted_text]
 
-    # Step 4 – synonym substitution (perplexity)
+    # Step 4 – clause reordering
+    sentences = reorder_clauses(sentences, rate=clause_reorder_rate, rng=rng)
+
+    # Step 5 – sentence splitting
+    sentences = split_long_sentences(sentences, rate=split_rate, rng=rng)
+
+    # Step 6 – vary sentence lengths (burstiness)
+    varied, sentences_merged = vary_sentence_lengths(
+        sentences, merge_rate=merge_rate, rng=rng
+    )
+
+    # Step 7 – discourse filler insertion
+    varied = insert_discourse_fillers(varied, rate=filler_rate, rng=rng)
+
+    # Step 8 – synonym substitution (perplexity)
     humanized_sentences = [
         substitute_synonyms(sent, swap_rate=synonym_rate, rng=rng) for sent in varied
     ]

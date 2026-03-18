@@ -47,15 +47,19 @@ _PLACEHOLDER_INPUT = (
 # Bypass-strength presets
 # ---------------------------------------------------------------------------
 
-# Each preset defines the number of sequential humanize() passes and the
-# synonym / merge rates.  synonym_rate is only applied on the *first* pass;
-# subsequent passes use merge/structural variation only (synonym_rate=0.0).
-# synonym_rate is capped at _MAX_SYNONYM_RATE (0.40) in the core pipeline;
-# the values below reflect that safe ceiling.
+# Each preset defines the number of sequential humanize() passes and rates
+# for the 8-step pipeline.  synonym_rate is only applied on the *first*
+# pass; subsequent passes use structural variation only.
 _BYPASS_PRESETS: dict[str, dict[str, int | float] | None] = {
-    "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30},
-    "Medium":     {"passes": 2, "synonym_rate": 0.35, "merge_rate": 0.45},
-    "Aggressive": {"passes": 3, "synonym_rate": 0.40, "merge_rate": 0.60},
+    "Light":      {"passes": 1, "synonym_rate": 0.30, "merge_rate": 0.30,
+                   "contraction_rate": 0.50, "clause_reorder_rate": 0.10,
+                   "split_rate": 0.15, "filler_rate": 0.04},
+    "Medium":     {"passes": 2, "synonym_rate": 0.40, "merge_rate": 0.45,
+                   "contraction_rate": 0.70, "clause_reorder_rate": 0.20,
+                   "split_rate": 0.30, "filler_rate": 0.08},
+    "Aggressive": {"passes": 3, "synonym_rate": 0.55, "merge_rate": 0.60,
+                   "contraction_rate": 0.85, "clause_reorder_rate": 0.30,
+                   "split_rate": 0.40, "filler_rate": 0.12},
     "Custom":     None,  # uses the manual slider values
 }
 
@@ -418,10 +422,18 @@ class HumanizerApp:
                 passes = int(preset["passes"])
                 synonym_rate = float(preset["synonym_rate"])
                 merge_rate = float(preset["merge_rate"])
+                contraction_rate = float(preset["contraction_rate"])
+                clause_reorder_rate = float(preset["clause_reorder_rate"])
+                split_rate = float(preset["split_rate"])
+                filler_rate = float(preset["filler_rate"])
             else:
                 passes = 1
                 synonym_rate = self._synonym_rate.get()
                 merge_rate = self._merge_rate.get()
+                contraction_rate = 0.65
+                clause_reorder_rate = 0.20
+                split_rate = 0.30
+                filler_rate = 0.08
 
             current_text = text
             result = None
@@ -429,13 +441,19 @@ class HumanizerApp:
             total_sentences_merged = 0
 
             for pass_num in range(passes):
-                # Only apply synonym swapping on the first pass so that
-                # successive passes use structural variation (merging) only.
+                # Only apply synonym swapping and contractions on the first
+                # pass so that successive passes use structural variation only.
                 current_synonym_rate = synonym_rate if pass_num == 0 else 0.0
+                current_contraction_rate = contraction_rate if pass_num == 0 else 0.0
+                current_filler_rate = filler_rate if pass_num == 0 else 0.0
                 result = humanize(
                     current_text,
                     synonym_rate=current_synonym_rate,
                     merge_rate=merge_rate,
+                    contraction_rate=current_contraction_rate,
+                    clause_reorder_rate=clause_reorder_rate,
+                    split_rate=split_rate,
+                    filler_rate=current_filler_rate,
                 )
                 total_markers_removed += result.markers_removed
                 total_sentences_merged += result.sentences_merged

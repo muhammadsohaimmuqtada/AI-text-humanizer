@@ -4,6 +4,10 @@ Tests cover:
 - AI marker stripping (normal, edge-case, case-insensitive, multiple markers)
 - Sentence burstiness variation (merging, no-merge, edge cases)
 - Synonym substitution (NLTK-backed or regex fallback)
+- Contraction insertion (formal → contracted)
+- Clause reordering (prepositional phrase movement)
+- Sentence splitting (long compound sentences)
+- Discourse filler insertion (natural interjections)
 - Full humanize() pipeline (word counts, metadata, determinism, edge cases)
 """
 
@@ -14,10 +18,13 @@ import unittest
 
 from aip.humanizer import (
     HumanizeResult,
-    _MAX_SYNONYM_RATE,
     _SYNONYM_BLACKLIST,
     _capitalize_sentences,
     humanize,
+    insert_contractions,
+    insert_discourse_fillers,
+    reorder_clauses,
+    split_long_sentences,
     strip_ai_markers,
     substitute_synonyms,
     vary_sentence_lengths,
@@ -101,6 +108,25 @@ class TestStripAiMarkers(unittest.TestCase):
         _, count = strip_ai_markers(text)
         self.assertEqual(count, 2)
 
+    def test_removes_modern_gpt_markers(self) -> None:
+        text = "In today's rapidly evolving world, AI is key. This delves into the topic."
+        result, count = strip_ai_markers(text)
+        self.assertNotIn("in today's rapidly evolving", result.lower())
+        self.assertNotIn("delves into", result.lower())
+        self.assertGreaterEqual(count, 2)
+
+    def test_removes_plays_crucial_role(self) -> None:
+        text = "Technology plays a crucial role in modern life."
+        result, count = strip_ai_markers(text)
+        self.assertNotIn("plays a crucial role in", result.lower())
+        self.assertGreater(count, 0)
+
+    def test_removes_overall(self) -> None:
+        text = "Overall, the project was a success."
+        result, count = strip_ai_markers(text)
+        self.assertNotIn("overall,", result.lower())
+        self.assertGreater(count, 0)
+
 
 class TestVarySentenceLengths(unittest.TestCase):
     def test_merges_at_rate_one(self) -> None:
@@ -142,7 +168,13 @@ class TestVarySentenceLengths(unittest.TestCase):
         rng = random.Random(0)
         merged, _ = vary_sentence_lengths(sentences, merge_rate=1.0, rng=rng)
         text = merged[0]
-        found_conjunction = any(conjunction.strip() in text for conjunction in [" and ", " while ", "meaning", "—", "which"])
+        found_conjunction = any(
+            conjunction.strip() in text
+            for conjunction in [
+                "and", "while", "meaning", "—", "which", "but",
+                "yet", "so", "plus", "essentially", "basically",
+            ]
+        )
         self.assertTrue(found_conjunction)
 
     def test_total_word_count_preserved_approximately(self) -> None:
@@ -151,7 +183,7 @@ class TestVarySentenceLengths(unittest.TestCase):
         words_before = sum(len(s.split()) for s in sentences)
         words_after = len(merged[0].split())
         # Merging adds one conjunction word; allow small delta
-        self.assertAlmostEqual(words_before, words_after, delta=3)
+        self.assertAlmostEqual(words_before, words_after, delta=5)
 
     def test_two_pairs_can_both_merge(self) -> None:
         sentences = ["A.", "B.", "C.", "D."]
@@ -159,6 +191,152 @@ class TestVarySentenceLengths(unittest.TestCase):
         merged, count = vary_sentence_lengths(sentences, merge_rate=1.0, rng=rng)
         self.assertEqual(count, 2)
         self.assertEqual(len(merged), 2)
+
+
+class TestInsertContractions(unittest.TestCase):
+    def test_contracts_do_not(self) -> None:
+        text = "I do not like it."
+        result = insert_contractions(text, rate=1.0, rng=random.Random(0))
+        self.assertIn("don't", result)
+        self.assertNotIn("do not", result)
+
+    def test_contracts_it_is(self) -> None:
+        text = "It is a beautiful day."
+        result = insert_contractions(text, rate=1.0, rng=random.Random(0))
+        self.assertIn("It's", result)
+
+    def test_contracts_cannot(self) -> None:
+        text = "We cannot proceed without help."
+        result = insert_contractions(text, rate=1.0, rng=random.Random(0))
+        self.assertIn("can't", result)
+
+    def test_rate_zero_no_change(self) -> None:
+        text = "We do not agree and it is clear."
+        result = insert_contractions(text, rate=0.0, rng=random.Random(0))
+        self.assertEqual(result, text)
+
+    def test_preserves_capitalisation(self) -> None:
+        text = "It is important."
+        result = insert_contractions(text, rate=1.0, rng=random.Random(0))
+        self.assertTrue(result[0].isupper())
+
+    def test_empty_string(self) -> None:
+        result = insert_contractions("", rate=1.0, rng=random.Random(0))
+        self.assertEqual(result, "")
+
+    def test_contracts_multiple(self) -> None:
+        text = "They are not coming. She will not attend."
+        result = insert_contractions(text, rate=1.0, rng=random.Random(0))
+        # "they are" contracts to "they're" before "are not" → "aren't"
+        self.assertIn("They're", result)
+        self.assertIn("won't", result)
+
+
+class TestReorderClauses(unittest.TestCase):
+    def test_moves_prepositional_clause(self) -> None:
+        sentences = ["In 2024, the technology improved significantly."]
+        result = reorder_clauses(sentences, rate=1.0, rng=random.Random(0))
+        # The clause should be moved to end
+        self.assertNotEqual(result[0], sentences[0])
+        self.assertIn("2024", result[0].lower())
+        self.assertIn("technology", result[0].lower())
+
+    def test_rate_zero_no_change(self) -> None:
+        sentences = ["In 2024, things changed."]
+        result = reorder_clauses(sentences, rate=0.0, rng=random.Random(0))
+        self.assertEqual(result, sentences)
+
+    def test_preserves_non_matching_sentences(self) -> None:
+        sentences = ["The cat sat on the mat."]
+        result = reorder_clauses(sentences, rate=1.0, rng=random.Random(0))
+        self.assertEqual(result[0], sentences[0])
+
+    def test_empty_list(self) -> None:
+        result = reorder_clauses([], rate=1.0)
+        self.assertEqual(result, [])
+
+
+class TestSplitLongSentences(unittest.TestCase):
+    def test_splits_long_compound(self) -> None:
+        sentence = (
+            "The researchers conducted extensive analysis of the data, "
+            "and they found significant patterns in the results that "
+            "warranted further investigation."
+        )
+        result = split_long_sentences([sentence], rate=1.0, min_words=10, rng=random.Random(0))
+        self.assertGreater(len(result), 1)
+
+    def test_rate_zero_no_split(self) -> None:
+        sentence = "A long sentence that goes on and on, and it keeps going with more content."
+        result = split_long_sentences(
+            [sentence], rate=0.0, min_words=5, rng=random.Random(0)
+        )
+        self.assertEqual(len(result), 1)
+
+    def test_short_sentence_not_split(self) -> None:
+        sentence = "Short sentence."
+        result = split_long_sentences(
+            [sentence], rate=1.0, min_words=10, rng=random.Random(0)
+        )
+        self.assertEqual(len(result), 1)
+
+    def test_empty_list(self) -> None:
+        result = split_long_sentences([], rate=1.0)
+        self.assertEqual(result, [])
+
+    def test_split_preserves_content(self) -> None:
+        sentence = "The weather was sunny and warm, but the forecast predicted heavy rain later in the afternoon."
+        result = split_long_sentences([sentence], rate=1.0, min_words=8, rng=random.Random(0))
+        combined = " ".join(result).lower()
+        self.assertIn("weather", combined)
+        self.assertIn("forecast", combined)
+
+
+class TestInsertDiscourseFillers(unittest.TestCase):
+    def test_adds_fillers_at_high_rate(self) -> None:
+        sentences = [
+            "The first sentence is here.",
+            "The second sentence follows suit.",
+            "The third sentence wraps it up nicely.",
+        ]
+        result = insert_discourse_fillers(sentences, rate=1.0, rng=random.Random(0))
+        # First sentence should never get a filler
+        self.assertFalse(any(
+            result[0].startswith(f) for f in [
+                "Honestly,", "Look,", "The thing is,", "Here's the deal",
+                "Basically,", "Truth is,", "I mean,", "Sure,", "Right,",
+            ]
+        ))
+        # At least one subsequent sentence should have a filler
+        has_filler = False
+        for sent in result[1:]:
+            if any(sent.startswith(f) for f in [
+                "Honestly,", "Look,", "The thing is,", "Here's the deal",
+                "Basically,", "Truth is,", "I mean,", "Sure,", "Right,",
+                "So yeah,", "In practice,", "Realistically,",
+                "At the end of the day,", "For what it's worth,",
+                "Point being,", "To be fair,", "If you think about it,",
+                "No doubt,", "Funny enough,", "Interestingly,",
+                "Naturally,", "And honestly,", "As it turns out,",
+                "The reality is,", "Plain and simple,",
+            ]):
+                has_filler = True
+                break
+        self.assertTrue(has_filler)
+
+    def test_rate_zero_no_fillers(self) -> None:
+        sentences = ["First sentence.", "Second sentence.", "Third sentence."]
+        result = insert_discourse_fillers(sentences, rate=0.0, rng=random.Random(0))
+        self.assertEqual(result, sentences)
+
+    def test_empty_list(self) -> None:
+        result = insert_discourse_fillers([], rate=1.0)
+        self.assertEqual(result, [])
+
+    def test_first_sentence_never_gets_filler(self) -> None:
+        sentences = ["Only one long enough sentence right here."]
+        result = insert_discourse_fillers(sentences, rate=1.0, rng=random.Random(0))
+        self.assertEqual(result[0], sentences[0])
 
 
 class TestSubstituteSynonyms(unittest.TestCase):
@@ -181,6 +359,13 @@ class TestSubstituteSynonyms(unittest.TestCase):
         result = substitute_synonyms(text, swap_rate=1.0, rng=random.Random(42))
         self.assertIn("Python", result)
         self.assertIn("language", result)
+
+    def test_high_rate_still_produces_output(self) -> None:
+        """swap_rate above old cap of 0.40 should still work."""
+        text = "The quick brown fox jumps over the lazy dog."
+        result = substitute_synonyms(text, swap_rate=0.80, rng=random.Random(42))
+        self.assertIsInstance(result, str)
+        self.assertTrue(result.strip())
 
 
 class TestCapitalizeSentences(unittest.TestCase):
@@ -296,8 +481,12 @@ class TestHumanizePipeline(unittest.TestCase):
 
     def test_synonym_rate_zero_does_not_change_words(self) -> None:
         text = "The sky is blue and the grass is green."
-        result = humanize(text, synonym_rate=0.0, merge_rate=0.0, seed=0)
-        # With no swaps and no merges only marker-stripping and
+        result = humanize(
+            text, synonym_rate=0.0, merge_rate=0.0, seed=0,
+            contraction_rate=0.0, clause_reorder_rate=0.0,
+            split_rate=0.0, filler_rate=0.0,
+        )
+        # With no swaps and no transforms, only marker-stripping and
         # capitalisation can alter the text
         self.assertIn("blue", result.humanized_text.lower())
         self.assertIn("green", result.humanized_text.lower())
@@ -315,45 +504,65 @@ class TestHumanizePipeline(unittest.TestCase):
         result = humanize("First. Second.", seed=0)
         self.assertIsInstance(result.sentences_merged, int)
 
+    def test_contractions_applied_in_pipeline(self) -> None:
+        text = "It is important to understand. They do not care."
+        result = humanize(text, contraction_rate=1.0, seed=42,
+                          synonym_rate=0.0, merge_rate=0.0,
+                          clause_reorder_rate=0.0, split_rate=0.0,
+                          filler_rate=0.0)
+        # At least one contraction should appear
+        lower = result.humanized_text.lower()
+        has_contraction = "it's" in lower or "don't" in lower
+        self.assertTrue(has_contraction)
+
+    def test_all_rates_zero_produces_minimal_change(self) -> None:
+        text = "The sky is blue. The grass is green."
+        result = humanize(
+            text, synonym_rate=0.0, merge_rate=0.0,
+            contraction_rate=0.0, clause_reorder_rate=0.0,
+            split_rate=0.0, filler_rate=0.0, seed=0,
+        )
+        # With everything at zero, output should be very close to input
+        self.assertIn("sky", result.humanized_text.lower())
+        self.assertIn("blue", result.humanized_text.lower())
+        self.assertIn("grass", result.humanized_text.lower())
+        self.assertIn("green", result.humanized_text.lower())
+
+    def test_backward_compatibility_default_params(self) -> None:
+        """humanize() should work without any new parameters (backward compat)."""
+        text = "AI is evolving. Many people are excited."
+        result = humanize(text, seed=0)
+        self.assertIsInstance(result, HumanizeResult)
+        self.assertTrue(result.humanized_text.strip())
+
 
 class TestSynonymSafetyGuards(unittest.TestCase):
-    """Tests for the synonym blacklist and rate-capping safety measures."""
+    """Tests for the synonym blacklist safety measures."""
 
     def test_blacklisted_words_are_never_swapped(self) -> None:
         """Context-critical blacklisted words must survive at swap_rate=1.0."""
-        critical_words = ["same", "social", "cloud", "digital", "data", "privacy"]
+        critical_words = ["not", "very", "also", "just", "only"]
         for word in critical_words:
-            text = f"The {word} system works well."
+            text = f"The approach is {word} effective in practice."
             result = substitute_synonyms(text, swap_rate=1.0, rng=random.Random(0))
             with self.subTest(word=word):
                 self.assertIn(word, result.lower())
 
-    def test_synonym_rate_capped_at_max(self) -> None:
-        """swap_rate values above _MAX_SYNONYM_RATE must be clamped."""
-        # With a very high requested rate the function must still return a
-        # grammatically intact string (not raise, not return empty).
-        text = "The quick brown fox jumps over the lazy dog."
-        result = substitute_synonyms(text, swap_rate=0.99, rng=random.Random(42))
-        self.assertIsInstance(result, str)
-        self.assertTrue(result.strip())
-
-    def test_max_synonym_rate_value(self) -> None:
-        """_MAX_SYNONYM_RATE must not exceed the documented safe threshold."""
-        self.assertLessEqual(_MAX_SYNONYM_RATE, 0.40)
-
     def test_blacklist_contains_key_words(self) -> None:
         """Spot-check that the expected words are in the blacklist."""
-        expected = {"same", "social", "cloud", "digital", "data", "privacy", "ethical"}
+        expected = {"not", "very", "also", "just", "only", "even", "still"}
         for word in expected:
             with self.subTest(word=word):
                 self.assertIn(word, _SYNONYM_BLACKLIST)
 
     def test_humanize_preserves_blacklisted_words_at_high_rate(self) -> None:
-        """Full pipeline must not replace blacklisted words even at Aggressive rates."""
-        text = "The social platform uses cloud systems to store data in the same way."
-        result = humanize(text, synonym_rate=0.40, merge_rate=0.60, seed=0)
+        """Full pipeline must not replace blacklisted words even at high rates."""
+        text = "The approach is not very effective. It is also quite slow."
+        result = humanize(text, synonym_rate=0.80, merge_rate=0.0, seed=0,
+                          contraction_rate=0.0, clause_reorder_rate=0.0,
+                          split_rate=0.0, filler_rate=0.0)
         output = result.humanized_text.lower()
-        for word in ("social", "cloud", "data", "same"):
+        for word in ("not", "very", "also"):
             with self.subTest(word=word):
                 self.assertIn(word, output)
 

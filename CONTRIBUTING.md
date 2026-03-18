@@ -1,21 +1,23 @@
 # Contributing
 
-Thanks for contributing.
+Thanks for your interest in contributing!
 
 ## Quick start
 
 1. Fork and clone the repository.
-2. Install development dependencies:
+2. Create a virtual environment and install dev dependencies:
 
 ```bash
-python3 -m pip install -e '.[forensics,api,test]'
+python3 -m venv venv
+source venv/bin/activate
+pip install -e '.[api,test]'
+python -m nltk.downloader wordnet punkt_tab averaged_perceptron_tagger_eng
 ```
 
-3. Run checks before opening a PR:
+3. Run tests before opening a PR:
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-bash scripts/pre_release_check.sh
+python -m pytest tests/ -v
 ```
 
 ## Pull request guidelines
@@ -29,14 +31,14 @@ bash scripts/pre_release_check.sh
 
 Use clear commit titles, for example:
 - `feat: add calibration endpoint`
-- `fix: tighten file path guard`
+- `fix: tighten synonym blacklist`
 - `docs: update deployment checklist`
-- `test: add rate limiter coverage`
+- `test: add contraction insertion coverage`
 
 ## Reporting issues
 
 Please include:
-- environment details (OS, Python version)
-- exact command/request used
-- expected behavior vs actual behavior
-- sanitized logs or stack traces
+- Environment details (OS, Python version)
+- Exact command/request used
+- Expected behavior vs actual behavior
+- Sanitized logs or stack traces

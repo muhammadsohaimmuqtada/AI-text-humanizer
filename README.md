@@ -1,67 +1,81 @@
-# AI Text Humanizer Platform
+# AI Text Humanizer
 
-A local, modular NLP pipeline that rewrites AI-generated text to read as
-naturally human-written – reducing AI-scanner detection scores by raising
-**burstiness** (sentence-length variance) and **perplexity** (vocabulary
-diversity) while removing common AI transition markers.
+A local, offline NLP pipeline that rewrites AI-generated text to read as
+naturally human-written — reducing AI-detection scores by attacking
+**burstiness**, **perplexity**, **sentence structure**, and **vocabulary
+diversity** across 8 transformation stages.
+
+**No API keys needed. No cloud. 100% local.**
 
 ## Features
 
-- **AI marker stripping** – Removes common AI transition phrases such as
-  *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
-- **Burstiness variation** – Merges adjacent sentences with natural conjunctions
-  to mimic the sentence-length variability of a human writer.
-- **Synonym substitution** – Swaps adjectives and adverbs with WordNet synonyms
-  to raise lexical perplexity without changing logical meaning.
-- **Graphical User Interface (GUI)** – A dark-themed desktop app built with
+- **8-stage humanization pipeline** — markers, contractions, clause
+  reordering, sentence splitting, burstiness, discourse fillers, and
+  synonym substitution working together.
+- **~90 AI marker patterns** — strips both classic ("Furthermore,",
+  "In conclusion,") and modern GPT-era markers ("delves into", "plays a
+  crucial role in", "in today's rapidly evolving").
+- **Contraction insertion** — converts formal AI phrasing ("do not" →
+  "don't", "it is" → "it's") with 50+ patterns.
+- **Clause reordering** — moves prepositional phrases to break AI's
+  rigid Subject-Verb-Object pattern.
+- **Sentence splitting** — breaks long compound sentences into short,
+  punchy fragments that characterise human writing.
+- **Discourse fillers** — inserts natural human interjections like
+  "Honestly,", "Look,", "The thing is," sparingly.
+- **Smart synonym substitution** — replaces adjectives/adverbs using
+  WordNet with a robust blacklist (~100 words) to prevent bizarre swaps.
+- **Burstiness variation** — merges sentences with 16 conjunction
+  styles including semicolons, dashes, and conversational connectors.
+- **Graphical User Interface (GUI)** — dark-themed desktop app built with
   Python's built-in `tkinter` library. No extra GUI framework required.
-  - **Bypass Strength selector** – choose how aggressively the tool humanizes
-    your text with three one-click presets:
+  - **Bypass Strength selector** — choose how aggressively the tool
+    humanizes with three one-click presets:
 
-    | Strength | Passes | Synonym Rate | Merge Rate | Best for |
-    |---|---|---|---|---|
-    | **Light** | 1 | 35 % | 25 % | Lightly AI-flavoured text |
-    | **Medium** | 2 | 60 % | 40 % | Moderate AI writing patterns |
-    | **Aggressive** | 3 | 85 % | 60 % | Heavy AI output; drops detection to ~0 % in one click |
-    | **Custom** | 1 | user-defined | user-defined | Fine-grained control via sliders |
+    | Strength | Passes | Best for |
+    |---|---|---|
+    | **Light** | 1 | Lightly AI-flavoured text |
+    | **Medium** | 2 | Moderate AI writing patterns |
+    | **Aggressive** | 3 | Heavy AI output; drops detection to ~0% |
+    | **Custom** | 1 | Fine-grained control via sliders |
 
-  - **Multi-pass engine** – the Aggressive preset silently runs the pipeline
-    three times so you get near-zero AI detection in a single button press
-    instead of pasting and re-running manually.
-  - **Copy Result button** – copies the humanized text straight to your
-    clipboard.
-- **REST API** – optional FastAPI server for programmatic access.
-- **CLI** – full-featured command-line interface.
-
-## Project Standards
-
-- License: MIT ([LICENSE](LICENSE))
-- Security guidance: [SECURITY.md](SECURITY.md)
-- Deployment guide: [DEPLOYMENT.md](DEPLOYMENT.md)
-- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
+  - **Multi-pass engine** — the Aggressive preset silently runs the
+    pipeline three times for near-zero AI detection.
+  - **Copy Result button** — copies the humanized text to clipboard.
+- **REST API** — optional FastAPI server for programmatic access.
+- **CLI** — full-featured command-line interface.
 
 ## How It Works
 
-The humanization pipeline applies four stages in sequence:
+The pipeline applies **eight stages** in sequence:
 
-1. **Marker stripping** – Removes common AI transition phrases such as
-   *"In conclusion,"*, *"Furthermore,"*, and *"As an AI language model"*.
-2. **Sentence tokenisation** – Splits the cleaned text into individual
-   sentences using NLTK `sent_tokenize` (regex fallback when NLTK data is
-   absent).
-3. **Burstiness variation** – Randomly merges adjacent sentences with a
-   natural conjunction (e.g. *" and "*, *" while "*, *" — "*) so that
-   sentence lengths vary the way a human writer's do.
-4. **Synonym substitution** – Replaces a configurable fraction of
+1. **Marker stripping** — Removes ~90 common AI transition phrases
+   (e.g. "Furthermore,", "In conclusion,", "delves into", "plays a
+   crucial role in").
+2. **Sentence tokenisation** — Splits the cleaned text into individual
+   sentences using NLTK (regex fallback when NLTK data is absent).
+3. **Contraction insertion** — Converts formal phrases to contractions
+   ("do not" → "don't", "it is" → "it's", "cannot" → "can't").
+4. **Clause reordering** — Moves leading prepositional/adverbial phrases
+   to the end of sentences to break AI's monotonous structure.
+5. **Sentence splitting** — Breaks long compound sentences at
+   coordinating conjunctions into shorter ones.
+6. **Burstiness variation** — Randomly merges adjacent sentences with
+   varied conjunctions so sentence lengths mimic human writing.
+7. **Discourse filler insertion** — Prepends natural human phrases like
+   "Honestly,", "Look,", "The thing is," to some sentences.
+8. **Synonym substitution** — Replaces a configurable fraction of
    adjectives and adverbs with WordNet synonyms to raise lexical
-   perplexity without altering the logical meaning.
+   perplexity without altering meaning.
 
 ## Install
 
 ```bash
-cd /path/to/ai-text-humanizer
+git clone https://github.com/YOUR_USERNAME/AI-text-humanizer.git
+cd AI-text-humanizer
+python3 -m venv venv
+source venv/bin/activate   # Linux/macOS
+# venv\Scripts\activate    # Windows
 pip install -e '.[api]'
 ```
 
@@ -110,12 +124,13 @@ The app window opens immediately. Typical workflow:
 
 1. **Paste** your AI-generated text into the *Input Text* area on the left.
 2. **Select** a *Bypass Strength* preset in the centre panel:
-   - **Light** – one pass, conservative rates; good for lightly AI-flavoured text.
+   - **Light** – one pass, conservative rates; good for lightly
+     AI-flavoured text.
    - **Medium** – two passes; suitable for most AI-generated content.
-   - **Aggressive** *(default)* – three passes at high rates; use this to drop
-     AI detection to ~0 % in a single click.
-   - **Custom** – drag the *Synonym Rate* and *Merge Rate* sliders to any value
-     you prefer.
+   - **Aggressive** *(default)* – three passes at high rates; use this
+     to drop AI detection to ~0% in a single click.
+   - **Custom** – drag the *Synonym Rate* and *Merge Rate* sliders to
+     any value you prefer.
 3. Click **▶ Humanize** and wait a moment for the pipeline to finish.
 4. Read the result in the *Humanized Output* area on the right.
 5. Click **⎘ Copy Result** to copy the text directly to your clipboard.
@@ -197,6 +212,31 @@ Response:
 | `/policies`  | GET    | Active configuration limits              |
 | `/metrics`   | GET    | Request and latency metrics              |
 
+## Python API
+
+```python
+from aip.humanizer import humanize
+
+result = humanize(
+    text="Furthermore, it is important to note that AI is transforming industries.",
+    synonym_rate=0.35,
+    merge_rate=0.25,
+    contraction_rate=0.65,
+    clause_reorder_rate=0.20,
+    split_rate=0.30,
+    filler_rate=0.08,
+    seed=42,
+)
+
+print(result.humanized_text)
+print(f"Words: {result.original_word_count} → {result.humanized_word_count}")
+print(f"Markers removed: {result.markers_removed}")
+print(f"Sentences merged: {result.sentences_merged}")
+```
+
+All new parameters are optional with sensible defaults — the simplest call
+is just `humanize(text="...")`.
+
 ## Environment Configuration
 
 Copy and edit `.env.example`:
@@ -215,20 +255,18 @@ Key variables:
 | `AIP_RATE_LIMIT_BURST`   | `20`          | Burst allowance                      |
 | `AIP_AUDIT_LOG_PATH`  | `/tmp/aip_audit.jsonl` | Audit log destination          |
 
-## Python API
+## Project Standards
 
-```python
-from aip.humanizer import humanize
+- License: MIT ([LICENSE](LICENSE))
+- Security guidance: [SECURITY.md](SECURITY.md)
+- Deployment guide: [DEPLOYMENT.md](DEPLOYMENT.md)
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 
-result = humanize(
-    text="Furthermore, it is important to note that AI is transforming industries.",
-    synonym_rate=0.35,
-    merge_rate=0.25,
-    seed=42,
-)
+## Running Tests
 
-print(result.humanized_text)
-print(f"Words: {result.original_word_count} → {result.humanized_word_count}")
-print(f"Markers removed: {result.markers_removed}")
-print(f"Sentences merged: {result.sentences_merged}")
+```bash
+pip install -e '.[test]'
+python -m pytest tests/ -v
 ```
